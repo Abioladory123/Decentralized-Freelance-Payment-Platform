@@ -8,6 +8,8 @@ import {
   notifyDisputeOpened,
   notifyMilestoneReleased,
   notifyEscrowRefunded,
+  shortAddress,
+  maskAddresses,
   NotificationJob,
 } from "../lib/notifications";
 
@@ -146,6 +148,75 @@ describe("Email Notifications System (Issue #67)", () => {
       expect(testProvider.sent[1].to).toBe("freelancer@example.com");
       expect(testProvider.sent[0].subject).toContain("Escrow Refunded: Logo Design");
       expect(testProvider.sent[0].text).toContain("Dispute timeout reached");
+    });
+  });
+
+  describe("Address masking and privacy (Issue #311)", () => {
+    const FULL_ADDRESS = "GBPLJHDI6RPLS4EEJJTM7EVEV3UNTXLFAACWA63QSTHGLWH5RO3LQ75B";
+
+    it("shortAddress truncates 56-char address to masked format", () => {
+      const masked = shortAddress(FULL_ADDRESS);
+      expect(masked).toBe("GBPLJ...Q75B");
+      expect(masked).toHaveLength(12);
+      expect(masked).not.toContain("4EEJJTM7EVEV3UNTXLFAACWA63QSTHGLWH5RO3");
+    });
+
+    it("shortAddress preserves addresses shorter than or equal to 10 chars", () => {
+      expect(shortAddress("GABC")).toBe("GABC");
+      expect(shortAddress("1234567890")).toBe("1234567890");
+    });
+
+    it("maskAddresses replaces full Stellar addresses embedded in arbitrary text", () => {
+      const text = `Contract between ${FULL_ADDRESS} and someone else`;
+      const masked = maskAddresses(text);
+      expect(masked).toBe("Contract between GBPLJ...Q75B and someone else");
+      expect(masked).not.toContain(FULL_ADDRESS);
+    });
+
+    it("masks Stellar public keys in email subject lines and text bodies", async () => {
+      const jobWithAddress: NotificationJob = {
+        id: "job_addr",
+        title: `Audit smart contract for ${FULL_ADDRESS}`,
+        client: {
+          stellarAddress: FULL_ADDRESS,
+          email: "client@example.com",
+          notifyOnDispute: true,
+          notifyOnRelease: true,
+          notifyOnRefund: true,
+        },
+      };
+
+      // 1. Dispute Opened
+      await notifyDisputeOpened(jobWithAddress, {
+        reason: `Payment withheld by ${FULL_ADDRESS}`,
+      });
+      expect(testProvider.sent).toHaveLength(1);
+      const disputeEmail = testProvider.sent[0];
+      expect(disputeEmail.subject).not.toContain(FULL_ADDRESS);
+      expect(disputeEmail.subject).toContain("GBPLJ...Q75B");
+      expect(disputeEmail.text).not.toContain(FULL_ADDRESS);
+      expect(disputeEmail.text).toContain("GBPLJ...Q75B");
+
+      // 2. Milestone Released
+      testProvider.sent = [];
+      await notifyMilestoneReleased(jobWithAddress, { index: 0, amount: "500" });
+      expect(testProvider.sent).toHaveLength(1);
+      const releaseEmail = testProvider.sent[0];
+      expect(releaseEmail.subject).not.toContain(FULL_ADDRESS);
+      expect(releaseEmail.subject).toContain("GBPLJ...Q75B");
+      expect(releaseEmail.text).not.toContain(FULL_ADDRESS);
+
+      // 3. Escrow Refunded
+      testProvider.sent = [];
+      await notifyEscrowRefunded(jobWithAddress, {
+        reason: `Refund requested for ${FULL_ADDRESS}`,
+      });
+      expect(testProvider.sent).toHaveLength(1);
+      const refundEmail = testProvider.sent[0];
+      expect(refundEmail.subject).not.toContain(FULL_ADDRESS);
+      expect(refundEmail.subject).toContain("GBPLJ...Q75B");
+      expect(refundEmail.text).not.toContain(FULL_ADDRESS);
+      expect(refundEmail.text).toContain("GBPLJ...Q75B");
     });
   });
 });

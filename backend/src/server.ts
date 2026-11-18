@@ -1,4 +1,5 @@
 import "dotenv/config";
+import { initTracing, shutdownTracing } from "./lib/tracing";
 import { createApp } from "./app";
 import { config } from "./config";
 import { prisma } from "./db";
@@ -7,6 +8,7 @@ import { createShutdownHandler } from "./lib/shutdown";
 import { verifyContractConfigurationSync } from "./lib/contractFreshness";
 
 async function main() {
+  await initTracing();
   await prisma.$connect();
 
   // Automated contract configuration drift check (issue #316)
@@ -38,7 +40,10 @@ async function main() {
       new Promise<void>((resolve, reject) => {
         server.close((err) => (err ? reject(err) : resolve()));
       }),
-    disconnect: () => prisma.$disconnect(),
+    disconnect: async () => {
+      await prisma.$disconnect();
+      await shutdownTracing();
+    },
     exit: (code) => process.exit(code),
   });
 

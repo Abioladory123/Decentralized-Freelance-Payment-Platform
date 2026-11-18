@@ -1,5 +1,7 @@
 import { PrismaClient } from "@prisma/client";
+import { SpanKind, SpanStatusCode } from "@opentelemetry/api";
 import { DatabaseTimeoutError } from "./middleware/errorHandler";
+import { tracer } from "./lib/tracing";
 
 export { DatabaseTimeoutError };
 
@@ -68,6 +70,15 @@ export function setupPrismaQueryMonitoring(
     poolStats.totalQueries++;
     const start = Date.now();
 
+    const span = tracer.startSpan(`prisma.${params.model ?? "raw"}.${params.action}`, {
+      kind: SpanKind.CLIENT,
+      attributes: {
+        "db.system": "postgresql",
+        "db.operation": params.action,
+        ...(params.model ? { "db.model": params.model } : {}),
+      },
+    });
+
     let timer: NodeJS.Timeout | undefined;
     const timeoutPromise = new Promise<never>((_, reject) => {
       timer = setTimeout(() => {
@@ -83,8 +94,11 @@ export function setupPrismaQueryMonitoring(
     try {
       const result = await Promise.race([next(params), timeoutPromise]);
       const duration = Date.now() - start;
+      span.setAttribute("db.duration_ms", duration);
+      span.setStatus({ code: SpanStatusCode.OK });
       if (duration > SLOW_QUERY_THRESHOLD_MS) {
         poolStats.slowQueries++;
+        span.setAttribute("db.slow_query", true);
         console.warn(
           `[slow_query] ${params.model ? `${params.model}.` : ""}${params.action} took ${duration}ms`,
         );
@@ -92,13 +106,21 @@ export function setupPrismaQueryMonitoring(
       return result;
     } catch (error) {
       const duration = Date.now() - start;
+      span.setAttribute("db.duration_ms", duration);
+      span.recordException(error instanceof Error ? error : new Error(String(error)));
+      span.setStatus({
+        code: SpanStatusCode.ERROR,
+        message: error instanceof Error ? error.message : String(error),
+      });
       if (duration > SLOW_QUERY_THRESHOLD_MS) {
+        span.setAttribute("db.slow_query", true);
         console.warn(
           `[slow_query] ${params.model ? `${params.model}.` : ""}${params.action} failed after ${duration}ms`,
         );
       }
       throw error;
     } finally {
+      span.end();
       if (timer) clearTimeout(timer);
       poolStats.activeQueries--;
     }

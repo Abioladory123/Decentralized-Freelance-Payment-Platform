@@ -238,6 +238,14 @@ registry.registerPath({
   responses: { 200: json(z.object({ status: z.string() }), "The service is up") },
 });
 
+registry.registerPath({
+  method: "get",
+  path: "/ready",
+  tags: ["System"],
+  summary: "Readiness probe",
+  responses: { 200: json(z.object({ status: z.string() }), "The service is ready to accept traffic") },
+});
+
 // ---------------------------------------------------------------------------
 // Users
 // ---------------------------------------------------------------------------

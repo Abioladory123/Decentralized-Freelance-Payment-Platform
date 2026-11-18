@@ -22,6 +22,7 @@ import { notificationsRouter } from "./routes/notifications";
 import { milestonesRouter } from "./routes/milestones";
 import { webhooksRouter } from "./routes/webhooks";
 import { adminIndexerRouter } from "./routes/adminIndexer";
+import { tracingMiddleware } from "./lib/tracing";
 
 /**
  * Access logging (issue #27).
@@ -41,10 +42,12 @@ export function requestLogger(): RequestHandler {
     const startedAt = process.hrtime.bigint();
     res.on("finish", () => {
       const durationMs = Number(process.hrtime.bigint() - startedAt) / 1e6;
+      const traceId = res.locals?.traceId || (req as unknown as { traceId?: string })?.traceId;
       console.log(
         JSON.stringify({
           level: "info",
           event: "http_request",
+          ...(traceId ? { traceId } : {}),
           method: req.method,
           path: req.originalUrl,
           status: res.statusCode,
@@ -58,6 +61,8 @@ export function requestLogger(): RequestHandler {
 
 export function createApp() {
   const app = express();
+
+  app.use(tracingMiddleware());
 
   if (config.TRUST_PROXY > 0) {
     app.set("trust proxy", config.TRUST_PROXY);
@@ -113,32 +118,35 @@ export function createApp() {
   app.use("/api/users/challenge", createAuthRateLimiter(authLimit));
   app.use("/api/users/auth", createAuthRateLimiter(authLimit));
 
-  app.get("/health", async (_req, res) => {
-  const dbOk = await checkDbHealth();
-  const indexerOk = await checkIndexerHealth();
+  const handleHealth = async (_req: express.Request, res: express.Response) => {
+    const dbOk = await checkDbHealth();
+    const indexerOk = await checkIndexerHealth();
 
-  if (!dbOk || !indexerOk) {
-    return res.status(503).json({
-      status: "unhealthy",
-      db: dbOk,
-      indexer: indexerOk,
-    });
-  }
+    if (!dbOk || !indexerOk) {
+      return res.status(503).json({
+        status: "unhealthy",
+        db: dbOk,
+        indexer: indexerOk,
+      });
+    }
 
-  // Also check indexer staleness: if cursor hasn't advanced recently,
-  // return degraded status even if indexer is running
-  const indexerStale = await checkIndexerStaleness();
-  if (indexerStale) {
-    return res.status(200).json({
-      status: "degraded",
-      db: true,
-      indexer: false,
-      message: "Indexer has not advanced recently",
-    });
-  }
+    // Also check indexer staleness: if cursor hasn't advanced recently,
+    // return degraded status even if indexer is running
+    const indexerStale = await checkIndexerStaleness();
+    if (indexerStale) {
+      return res.status(200).json({
+        status: "degraded",
+        db: true,
+        indexer: false,
+        message: "Indexer has not advanced recently",
+      });
+    }
 
-  return res.json({ status: "ok", db: true, indexer: true });
-});
+    return res.json({ status: "ok", db: true, indexer: true });
+  };
+
+  app.get("/health", handleHealth);
+  app.get("/ready", handleHealth);
 
   app.use("/api/users", usersRouter);
   app.use("/api/jobs", jobsRouter);
