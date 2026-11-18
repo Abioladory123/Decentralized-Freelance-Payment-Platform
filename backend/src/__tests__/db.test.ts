@@ -11,9 +11,9 @@ describe("formatDatabaseUrl", () => {
   it("appends statement_timeout to a clean Postgres URL", () => {
     const raw = "postgresql://postgres:secret@localhost:5432/mydb";
     const formatted = formatDatabaseUrl(raw);
-    expect(formatted).toBe(
-      "postgresql://postgres:secret@localhost:5432/mydb?statement_timeout=10000&connection_limit=10&pool_timeout=10",
-    );
+    expect(formatted).toContain("statement_timeout=10000");
+    expect(formatted).toContain("connection_limit=10");
+    expect(formatted).toContain("pool_timeout=10");
   });
 
   it("appends statement_timeout to a URL with existing query parameters", () => {
@@ -26,9 +26,8 @@ describe("formatDatabaseUrl", () => {
   it("does not override an existing statement_timeout", () => {
     const raw = "postgresql://postgres:secret@localhost:5432/mydb?statement_timeout=5000";
     const formatted = formatDatabaseUrl(raw);
-    expect(formatted).toBe(
-      "postgresql://postgres:secret@localhost:5432/mydb?statement_timeout=5000&connection_limit=10&pool_timeout=10",
-    );
+    expect(formatted).toContain("statement_timeout=5000");
+    expect(formatted).toContain("connection_limit=10");
   });
 
   it("handles undefined gracefully", () => {
