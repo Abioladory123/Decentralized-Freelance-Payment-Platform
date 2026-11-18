@@ -30,6 +30,22 @@ import { AppError } from "../middleware/errorHandler";
 /** The single RPC client for the configured Soroban network. */
 export const sorobanServer = new SorobanRpc.Server(config.SOROBAN_RPC_URL);
 
+/**
+ * Check connectivity and responsiveness of the configured Soroban RPC endpoint (issue #268).
+ * Executes getLatestLedger() with a 3-second timeout guard.
+ */
+export async function checkSorobanRpcHealth(server: SorobanRpc.Server = sorobanServer): Promise<boolean> {
+  try {
+    const timeout = new Promise<never>((_, reject) =>
+      setTimeout(() => reject(new Error("Soroban RPC health check timed out")), 3000),
+    );
+    await Promise.race([server.getLatestLedger(), timeout]);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 /** The passphrase the transaction must be signed against. */
 export const networkPassphrase =
   config.STELLAR_NETWORK === "mainnet" ? Networks.PUBLIC : Networks.TESTNET;

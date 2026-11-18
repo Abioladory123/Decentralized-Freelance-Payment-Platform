@@ -23,6 +23,7 @@ import { prisma } from "../db";
 import { withTransactionRetry } from "../lib/transactionRetry";
 import { requireAuth, optionalAuth } from "../middleware/auth";
 import { validate } from "../middleware/validate";
+import { idempotency } from "../middleware/idempotency";
 import { AppError } from "../middleware/errorHandler";
 import {
   formatAmount,
@@ -56,7 +57,22 @@ jobsRouter.get("/", async (req, res, next) => {
     if (!parsed.success) {
       throw new AppError(400, parsed.error.issues.map((i) => i.message).join(", "));
     }
-    const { status, client, freelancer, tag, q, sort, page, limit, isVerified } = parsed.data;
+    const {
+      status,
+      client,
+      freelancer,
+      tag,
+      q,
+      sort,
+      sortBy,
+      sortOrder,
+      page,
+      limit,
+      isVerified,
+      asset,
+      createdAfter,
+      createdBefore,
+    } = parsed.data;
 
     // A tag the taxonomy does not know is a caller mistake, not "no results" —
     // answering 400 with the accepted slugs keeps a typo from looking like an
@@ -70,6 +86,19 @@ jobsRouter.get("/", async (req, res, next) => {
       tagFilter = value;
     }
 
+    // Date range filters (issue #265)
+    const dateFilter: { gte?: Date; lte?: Date } = {};
+    if (createdAfter) {
+      const d = new Date(createdAfter);
+      if (isNaN(d.getTime())) throw new AppError(400, "Invalid createdAfter date format");
+      dateFilter.gte = d;
+    }
+    if (createdBefore) {
+      const d = new Date(createdBefore);
+      if (isNaN(d.getTime())) throw new AppError(400, "Invalid createdBefore date format");
+      dateFilter.lte = d;
+    }
+
     // Keyword search (issue #62): one case-insensitive substring match across
     // the two human-readable fields. Empty/whitespace `q` means "no filter".
     const searchFilter = q
@@ -81,25 +110,31 @@ jobsRouter.get("/", async (req, res, next) => {
         }
       : {};
 
-    // Sort (issue #62). The default stays newest-first, matching the index on
-    // (status, createdAt); an unrecognised value is rejected by the schema.
-    const orderBy =
-      sort === "oldest"
-        ? { createdAt: "asc" as const }
-        : sort === "amount_desc"
-          ? { totalAmount: "desc" as const }
-          : sort === "amount_asc"
-            ? { totalAmount: "asc" as const }
-            : { createdAt: "desc" as const };
+    // Sort order (issue #62, #265).
+    let orderBy: Record<string, "asc" | "desc">;
+    if (sortBy) {
+      const order = sortOrder === "asc" ? ("asc" as const) : ("desc" as const);
+      orderBy = { [sortBy]: order };
+    } else if (sort === "oldest") {
+      orderBy = { createdAt: "asc" };
+    } else if (sort === "amount_desc") {
+      orderBy = { totalAmount: "desc" };
+    } else if (sort === "amount_asc") {
+      orderBy = { totalAmount: "asc" };
+    } else {
+      orderBy = { createdAt: "desc" };
+    }
 
     const jobs = await prisma.job.findMany({
       where: {
         ...(status ? { status } : {}),
+        ...(asset ? { asset } : {}),
         ...(client ? { client: { stellarAddress: client } } : {}),
         ...(freelancer ? { freelancer: { stellarAddress: freelancer } } : {}),
         // Postgres array containment: a job matches when its tags include this one.
         ...(tagFilter ? { tags: { has: tagFilter } } : {}),
         ...(isVerified !== undefined ? { isVerified } : {}),
+        ...(Object.keys(dateFilter).length > 0 ? { createdAt: dateFilter } : {}),
         ...searchFilter,
       },
       include: { milestones: true, client: true, freelancer: true },
@@ -208,8 +243,8 @@ jobsRouter.delete("/:id/save", requireAuth, async (req, res, next) => {
   }
 });
 
-// POST /api/jobs
-jobsRouter.post("/", requireAuth, validate(createJobSchema), async (req, res, next) => {
+// POST /api/jobs (idempotent, issue #267)
+jobsRouter.post("/", requireAuth, idempotency(), validate(createJobSchema), async (req, res, next) => {
   try {
     const { title, description, milestones, expiresAt, asset, tags } = req.body as z.infer<
       typeof createJobSchema
@@ -314,8 +349,8 @@ jobsRouter.get("/:id", optionalAuth, async (req, res, next) => {
   }
 });
 
-// POST /api/jobs/:id/proposals
-jobsRouter.post("/:id/proposals", requireAuth, validate(createProposalSchema), async (req, res, next) => {
+// POST /api/jobs/:id/proposals (idempotent, issue #267)
+jobsRouter.post("/:id/proposals", requireAuth, idempotency(), validate(createProposalSchema), async (req, res, next) => {
   try {
     const job = await prisma.job.findUnique({
       where: { id: req.params.id },
@@ -378,8 +413,8 @@ jobsRouter.get("/:id/proposals", async (req, res, next) => {
   }
 });
 
-// PUT /api/jobs/:id/assign — assign freelancer under RepeatableRead isolation (issue #276)
-jobsRouter.put("/:id/assign", requireAuth, validate(assignJobSchema), async (req, res, next) => {
+// PUT /api/jobs/:id/assign — assign freelancer under RepeatableRead isolation (issue #276, #267)
+jobsRouter.put("/:id/assign", requireAuth, idempotency(), validate(assignJobSchema), async (req, res, next) => {
   try {
     const { freelancerAddress } = req.body as z.infer<typeof assignJobSchema>;
 
