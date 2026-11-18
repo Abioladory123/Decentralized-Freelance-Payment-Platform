@@ -752,7 +752,14 @@ registry.registerPath({
   summary: "Get escrow receipt",
   request: { params: z.object({ escrowId: z.string() }) },
   responses: {
-    200: json(z.record(z.unknown()), "Escrow receipt"),
+    200: {
+      ...json(z.record(z.unknown()), "Escrow receipt"),
+      headers: {
+        ETag: { schema: { type: "string" }, description: "Entity tag for caching" },
+        "Cache-Control": { schema: { type: "string" }, description: "Cache control directives" },
+      },
+    },
+    304: { description: "Not Modified - payload has not changed since previous request" },
     400: errors[400],
     404: errors[404],
   },

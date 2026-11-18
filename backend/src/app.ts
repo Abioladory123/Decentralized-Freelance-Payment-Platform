@@ -9,6 +9,7 @@ import { prisma } from "./db";
 import { docsEnabled, openApiDocument } from "./openapi";
 import { isAllowedOrigin, parseList } from "./lib/access";
 import { jsonReplacer } from "./lib/json";
+import { sendCachedJson } from "./lib/cache";
 import { errorHandler } from "./middleware/errorHandler";
 import { notFoundHandler } from "./middleware/notFound";
 import { createAuthRateLimiter } from "./middleware/rateLimit";
@@ -66,7 +67,9 @@ export function createApp() {
   // helmet's default Content-Security-Policy would block. The routes are only
   // registered outside production, so a deployed instance exposes neither.
   if (docsEnabled) {
-    app.get("/api/docs/openapi.json", (_req, res) => res.json(openApiDocument));
+    app.get("/api/docs/openapi.json", (req, res) => {
+      sendCachedJson(req, res, openApiDocument);
+    });
     app.use("/api/docs", swaggerUi.serve, swaggerUi.setup(openApiDocument));
   }
 
@@ -175,10 +178,13 @@ async function checkIndexerStaleness(): Promise<boolean> {
   }
 }
 
-/** Check database connectivity with a cheap query */
+/** Check database connectivity with a cheap query and timeout guard */
 async function checkDbHealth(): Promise<boolean> {
   try {
-    await prisma.$queryRaw`SELECT 1`;
+    const timeout = new Promise<never>((_, reject) =>
+      setTimeout(() => reject(new Error("Database health check timed out")), 3000),
+    );
+    await Promise.race([prisma.$queryRaw`SELECT 1`, timeout]);
     return true;
   } catch {
     return false;
