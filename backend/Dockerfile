@@ -13,7 +13,8 @@ RUN npm run build
 
 FROM node:20-alpine
 # Match the builder so Prisma uses its bundled engine instead of downloading one.
-RUN apk add --no-cache openssl
+# Install tini as init process to properly forward signals (SIGTERM/SIGINT) and reap zombies (issue #304).
+RUN apk add --no-cache openssl tini
 WORKDIR /app
 COPY --from=builder /app/dist ./dist
 COPY --from=builder /app/node_modules ./node_modules
@@ -32,5 +33,9 @@ COPY deployments ./deployments
 USER node
 
 EXPOSE 3000
-# Apply committed migrations, then start the API.
-CMD ["sh", "-c", "npx prisma migrate deploy && node dist/server.js"]
+
+# Use tini as the init process to forward signals to the node process (issue #304)
+ENTRYPOINT ["/sbin/tini", "--"]
+
+# Apply committed migrations, then start the API with `exec` so node receives termination signals directly.
+CMD ["sh", "-c", "npx prisma migrate deploy && exec node dist/server.js"]
