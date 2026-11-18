@@ -513,17 +513,38 @@ because it creates no database.
 Full checklist, environment tables, and post-deploy verification queries:
 [`docs/DEPLOYMENT.md`](./docs/DEPLOYMENT.md).
 
+### Pre-Launch Production Checklist & Smoke Tests
+
+For mainnet launches, multi-sig admin governance, high-availability RPC failover, and live deployment verification:
+- **Production Runbook:** Complete step-by-step launch and emergency recovery runbook in [`docs/PRODUCTION_RUNBOOK.md`](./docs/PRODUCTION_RUNBOOK.md).
+- **Automated Smoke Tests:** Execute post-deployment health, indexer, contract drift, and CORS checks:
+  ```bash
+  ./scripts/smoke_test.sh --url https://api.yourdomain.com --cors https://app.yourdomain.com
+  ```
+
+| Pre-Flight Area | Requirement | Status |
+|---|---|---|
+| **Contract Auditing** | Independent security audit on escrow, dispute, and reputation wasm | Mandatory |
+| **Admin Multisig** | Master key weight set to 0; 2-of-3 threshold panel enabled | Mandatory |
+| **Official SACs** | Mainnet Circle USDC (`CCW67...`) and Native XLM (`CAS3J...`) | Verified |
+| **Database Encryption** | PostgreSQL at-rest encryption and 7-day PITR backups | Verified |
+| **Contract Drift Sync** | Automated `verifyContractConfigurationSync()` assertion on boot | Automated |
+| **Smoke Suite** | Automated assertion of `/health`, indexer, and security headers | Automated |
+
 ## Documentation
 
 | Document | Contents |
 |----------|----------|
 | [`docs/ARCHITECTURE.md`](./docs/ARCHITECTURE.md) | Contracts, escrow state machine, interactions, and the backend's role |
 | [`docs/DEPLOYMENT.md`](./docs/DEPLOYMENT.md) | End-to-end deploy checklist and what is live today |
+| [`docs/PRODUCTION_RUNBOOK.md`](./docs/PRODUCTION_RUNBOOK.md) | Mainnet launch runbook, multisig governance, and smoke testing |
 | [`docs/TESTNET.md`](./docs/TESTNET.md) | Live contract ids, explorer links, reproduction steps |
 | [`docs/EVENTS.md`](./docs/EVENTS.md) | Event catalogue for indexers and clients |
 | [`docs/ASSETS.md`](./docs/ASSETS.md) | Payment-asset registry and how to add one |
 | [`docs/DISPUTES.md`](./docs/DISPUTES.md) | Arbitrator panel, thresholds, and the dispute timelock |
 | [`docs/REPUTATION.md`](./docs/REPUTATION.md) | Rating rules, weighting, and anti-spam |
+| [`docs/API_INTEGRATION_GUIDE.md`](./docs/API_INTEGRATION_GUIDE.md) | Third-party developer guide with TypeScript and Python code samples |
+| [`docs/TROUBLESHOOTING.md`](./docs/TROUBLESHOOTING.md) | Soroban contract error codes, Freighter wallet issues, and RPC diagnostics |
 | [`docs/wave-issues/`](./docs/wave-issues/) | Design notes for issues #2-#18 (all implemented) |
 | [`CONTRIBUTING.md`](./CONTRIBUTING.md) | Setup, conventions, contract reference tables |
 | [`SECURITY.md`](./SECURITY.md) | How to report a vulnerability |

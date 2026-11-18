@@ -1,5 +1,5 @@
 import { describe, expect, it, vi, beforeEach, afterEach } from "vitest";
-import { AppError, errorHandler } from "../middleware/errorHandler";
+import { AppError, DatabaseTimeoutError, errorHandler } from "../middleware/errorHandler";
 import type { NextFunction, Request, Response } from "express";
 
 describe("errorHandler", () => {
@@ -7,7 +7,7 @@ describe("errorHandler", () => {
   let res: Partial<Response>;
   let jsonMock: ReturnType<typeof vi.fn>;
   let statusMock: ReturnType<typeof vi.fn>;
-  let consoleErrorSpy: any;
+  let consoleErrorSpy: ReturnType<typeof vi.spyOn>;
   const originalNodeEnv = process.env.NODE_ENV;
   const noopNext = (() => {}) as unknown as NextFunction;
 
@@ -82,5 +82,36 @@ describe("errorHandler", () => {
     expect(statusMock).toHaveBeenCalledWith(503);
     expect(jsonMock).toHaveBeenCalledWith({ error: "Internal server error" });
     expect(consoleErrorSpy).toHaveBeenCalledWith("[error] POST /api/jobs/1/assign", err);
+  });
+
+  it("handles DatabaseTimeoutError with status 504 Gateway Timeout", () => {
+    const err = new DatabaseTimeoutError("Query timed out");
+
+    errorHandler(err, req as Request, res as Response, noopNext);
+
+    expect(statusMock).toHaveBeenCalledWith(504);
+    expect(jsonMock).toHaveBeenCalledWith({ error: "Gateway Timeout" });
+  });
+
+  it("handles Prisma P2024 connection pool timeout error with status 504 Gateway Timeout", () => {
+    const err = Object.assign(new Error("Timed out fetching a new connection from the connection pool"), {
+      code: "P2024",
+    });
+
+    errorHandler(err, req as Request, res as Response, noopNext);
+
+    expect(statusMock).toHaveBeenCalledWith(504);
+    expect(jsonMock).toHaveBeenCalledWith({ error: "Gateway Timeout" });
+  });
+
+  it("handles PostgreSQL 57014 statement_timeout cancellation error with status 504 Gateway Timeout", () => {
+    const err = Object.assign(new Error("canceling statement due to statement timeout"), {
+      code: "57014",
+    });
+
+    errorHandler(err, req as Request, res as Response, noopNext);
+
+    expect(statusMock).toHaveBeenCalledWith(504);
+    expect(jsonMock).toHaveBeenCalledWith({ error: "Gateway Timeout" });
   });
 });

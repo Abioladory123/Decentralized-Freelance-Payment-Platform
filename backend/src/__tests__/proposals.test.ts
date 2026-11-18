@@ -271,6 +271,89 @@ describe("Job Proposals API (Issue #63)", () => {
     });
   });
 
+  describe("GET /api/jobs/:id proposal privacy (Issue #309)", () => {
+    const jobWithProposals = {
+      id: "job_1",
+      title: "Design Smart Contract",
+      client: { id: "client_id", stellarAddress: CLIENT },
+      freelancer: null,
+      milestones: [],
+      disputes: [],
+      proposals: [
+        {
+          id: "prop_1",
+          jobId: "job_1",
+          freelancerId: "free_1",
+          coverLetter: "Freelancer 1 proposal details",
+          proposedRate: "500",
+          freelancer: { stellarAddress: FREELANCER },
+        },
+        {
+          id: "prop_2",
+          jobId: "job_1",
+          freelancerId: "free_2",
+          coverLetter: "Other user confidential rate",
+          proposedRate: "450",
+          freelancer: { stellarAddress: OTHER_USER },
+        },
+      ],
+    };
+
+    it("allows the job client to view all submitted proposals", async () => {
+      const token = await tokenFor(CLIENT);
+      h.job.findUnique.mockResolvedValue({ ...jobWithProposals });
+
+      const res = await fetch(`${baseUrl}/api/jobs/job_1`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+
+      expect(res.status).toBe(200);
+      const json = (await res.json()) as any;
+      expect(json.proposals).toHaveLength(2);
+      expect(json.proposals.map((p: any) => p.id)).toEqual(["prop_1", "prop_2"]);
+    });
+
+    it("restricts a competing freelancer to only view their own proposal", async () => {
+      const token = await tokenFor(FREELANCER);
+      h.job.findUnique.mockResolvedValue({ ...jobWithProposals });
+
+      const res = await fetch(`${baseUrl}/api/jobs/job_1`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+
+      expect(res.status).toBe(200);
+      const json = (await res.json()) as any;
+      expect(json.proposals).toHaveLength(1);
+      expect(json.proposals[0].id).toBe("prop_1");
+      expect(json.proposals[0].coverLetter).toBe("Freelancer 1 proposal details");
+      expect(json.proposals.some((p: any) => p.id === "prop_2")).toBe(false);
+    });
+
+    it("returns an empty proposals list to an authenticated user who has not applied", async () => {
+      const thirdParty = "GA2C5RFPE6GCKMY3US5PAB6UZLKIGAHWKXX2GFFQDVR5ZZZZZZZZZZZZ";
+      const token = await tokenFor(thirdParty);
+      h.job.findUnique.mockResolvedValue({ ...jobWithProposals });
+
+      const res = await fetch(`${baseUrl}/api/jobs/job_1`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+
+      expect(res.status).toBe(200);
+      const json = (await res.json()) as any;
+      expect(json.proposals).toEqual([]);
+    });
+
+    it("returns an empty proposals list to unauthenticated visitors", async () => {
+      h.job.findUnique.mockResolvedValue({ ...jobWithProposals });
+
+      const res = await fetch(`${baseUrl}/api/jobs/job_1`);
+
+      expect(res.status).toBe(200);
+      const json = (await res.json()) as any;
+      expect(json.proposals).toEqual([]);
+    });
+  });
+
   describe("PUT /api/jobs/:id/assign", () => {
     it("updates job freelancer and accepts proposal while rejecting other pending proposals", async () => {
       const token = await tokenFor(CLIENT);

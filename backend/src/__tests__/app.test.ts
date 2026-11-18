@@ -231,3 +231,108 @@ describe("jsonReplacer", () => {
     expect(JSON.stringify(row, jsonReplacer)).toBe(JSON.stringify(row));
   });
 });
+
+describe("HTTP cache headers (issue #294)", () => {
+  it("serves /api/docs/openapi.json with ETag and Cache-Control, and returns 304 on matching If-None-Match", async () => {
+    let server!: Server;
+    const { createApp } = await import("../app");
+    const app = createApp();
+    await new Promise<void>((resolve) => {
+      server = app.listen(0, "127.0.0.1", resolve);
+    });
+    const address = server.address();
+    if (address === null || typeof address === "string") throw new Error("no port assigned");
+    const baseUrl = `http://127.0.0.1:${address.port}`;
+
+    const res = await fetch(`${baseUrl}/api/docs/openapi.json`);
+    expect(res.status).toBe(200);
+    const etag = res.headers.get("etag");
+    const cacheControl = res.headers.get("cache-control");
+
+    expect(etag).toBeTruthy();
+    expect(cacheControl).toBe("public, max-age=300, stale-while-revalidate=60");
+
+    // Conditional request with matching ETag
+    const conditionalRes = await fetch(`${baseUrl}/api/docs/openapi.json`, {
+      headers: { "If-None-Match": etag! },
+    });
+    expect(conditionalRes.status).toBe(304);
+    const text = await conditionalRes.text();
+    expect(text).toBe("");
+
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+  });
+
+  it("serves /api/escrow/:escrowId/receipt with ETag and Cache-Control, and returns 304 on matching If-None-Match", async () => {
+    const { prisma } = await import("../db");
+    vi.spyOn(prisma.job, "findUnique").mockResolvedValue({
+      id: "job-1",
+      escrowId: 1n,
+      title: "Test Job",
+      description: "Test description",
+      status: "COMPLETED",
+      asset: "USDC",
+      totalAmount: "100.0",
+      createdAt: new Date("2026-01-01T00:00:00Z"),
+      milestones: [
+        {
+          id: "m-1",
+          index: 0,
+          amount: "100.0",
+          status: "RELEASED",
+          description: "Milestone 1",
+          deadline: null,
+        },
+      ],
+      client: { stellarAddress: USDC_ISSUER, displayName: "Client" },
+      freelancer: { stellarAddress: DEPLOY_ADMIN, displayName: "Freelancer" },
+    } as any);
+    vi.spyOn(prisma.chainEvent, "findMany").mockResolvedValue([
+      {
+        id: "evt-1",
+        escrowId: 1n,
+        action: "funded",
+        amount: 1000000000n,
+        txHash: "hash123",
+        ledger: 100,
+        createdAt: new Date("2026-01-01T01:00:00Z"),
+      },
+    ] as any);
+
+    let server!: Server;
+    const { createApp } = await import("../app");
+    const app = createApp();
+    await new Promise<void>((resolve) => {
+      server = app.listen(0, "127.0.0.1", resolve);
+    });
+    const address = server.address();
+    if (address === null || typeof address === "string") throw new Error("no port assigned");
+    const baseUrl = `http://127.0.0.1:${address.port}`;
+
+    const res = await fetch(`${baseUrl}/api/escrow/1/receipt`);
+    expect(res.status).toBe(200);
+    const etag = res.headers.get("etag");
+    const cacheControl = res.headers.get("cache-control");
+
+    expect(etag).toBeTruthy();
+    expect(cacheControl).toBe("public, max-age=300, stale-while-revalidate=60");
+
+    // Conditional request with matching ETag
+    const conditionalRes = await fetch(`${baseUrl}/api/escrow/1/receipt`, {
+      headers: { "If-None-Match": etag! },
+    });
+    expect(conditionalRes.status).toBe(304);
+    const text = await conditionalRes.text();
+    expect(text).toBe("");
+
+    // Conditional request with mismatched ETag returns full 200 payload
+    const mismatchRes = await fetch(`${baseUrl}/api/escrow/1/receipt`, {
+      headers: { "If-None-Match": '"mismatched-etag"' },
+    });
+    expect(mismatchRes.status).toBe(200);
+    const body = (await mismatchRes.json()) as any;
+    expect(body.escrowId).toBe("1");
+
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+  });
+});

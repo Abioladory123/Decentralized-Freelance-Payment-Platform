@@ -37,6 +37,7 @@ import { isValidStellarAddress } from "../lib/stellarAddress";
 import { formatBaseUnitsForAsset } from "../lib/assets";
 import { buildMilestoneReminders, parseHorizonHours } from "../lib/reminders";
 import { transactionHistoryQuerySchema } from "../lib/schemas";
+import { sendCachedJson } from "../lib/cache";
 
 export const usersRouter = Router();
 
@@ -272,7 +273,7 @@ usersRouter.get("/:address/transactions", async (req, res, next) => {
       }),
     ]);
 
-    res.json({
+    sendCachedJson(req, res, {
       data: events.map((event) => {
         const symbol = assetByEscrow.get(event.escrowId.toString()) ?? null;
         return {
@@ -342,12 +343,13 @@ usersRouter.get("/:address/reminders", async (req, res, next) => {
   }
 });
 
-// GET /api/users/:address
-usersRouter.get("/:address", async (req, res, next) => {
+// GET /api/users/me — the authenticated user's own profile (#67)
+//
+// Registered before `/:address`, otherwise Express would match "me" as an address.
+usersRouter.get("/me", requireAuth, async (_req, res, next) => {
   try {
     const user = await prisma.user.findUnique({
-      where: { stellarAddress: req.params.address },
-      include: { _count: { select: { jobsAsFreelancer: true, jobsAsClient: true } } },
+      where: { stellarAddress: res.locals.stellarAddress },
     });
     if (!user) throw new AppError(404, "User not found");
     res.json(user);
@@ -356,14 +358,161 @@ usersRouter.get("/:address", async (req, res, next) => {
   }
 });
 
-// GET /api/users/me — the authenticated user's own profile (#67)
-//
-// Registered before `/:address`, otherwise Express would match "me" as an
-// address. The public `/:address` route intentionally returns the same row.
-usersRouter.get("/me", requireAuth, async (_req, res, next) => {
+// GET /api/users/me/export — GDPR / CCPA data export archive (Issue #310)
+usersRouter.get("/me/export", requireAuth, async (_req, res, next) => {
   try {
     const user = await prisma.user.findUnique({
       where: { stellarAddress: res.locals.stellarAddress },
+      include: {
+        jobsAsClient: {
+          include: {
+            milestones: true,
+          },
+        },
+        jobsAsFreelancer: {
+          include: {
+            milestones: true,
+          },
+        },
+        proposals: {
+          include: {
+            job: { select: { id: true, title: true } },
+          },
+        },
+        uploadedDeliverables: true,
+        ratingsGiven: true,
+        ratingsReceived: true,
+        savedJobs: {
+          include: {
+            job: { select: { id: true, title: true } },
+          },
+        },
+        notifications: true,
+        messagesSent: true,
+      },
+    });
+    if (!user) throw new AppError(404, "User not found");
+
+    const jobIds = [
+      ...user.jobsAsClient.map((j) => j.id),
+      ...user.jobsAsFreelancer.map((j) => j.id),
+    ];
+
+    const relatedMessages = await prisma.message.findMany({
+      where: {
+        OR: [
+          { senderId: user.id },
+          ...(jobIds.length > 0 ? [{ jobId: { in: jobIds } }] : []),
+        ],
+      },
+      orderBy: { createdAt: "asc" },
+      include: {
+        sender: { select: { stellarAddress: true, displayName: true } },
+      },
+    });
+
+    // Audit logging for data privacy request
+    console.info(
+      `[audit] GDPR data export executed for user ${user.stellarAddress} (${user.id}) at ${new Date().toISOString()}`,
+    );
+
+    res.json({
+      exportedAt: new Date().toISOString(),
+      profile: {
+        id: user.id,
+        stellarAddress: user.stellarAddress,
+        displayName: user.displayName,
+        email: user.email,
+        bio: user.bio,
+        notifyOnDispute: user.notifyOnDispute,
+        notifyOnRelease: user.notifyOnRelease,
+        notifyOnRefund: user.notifyOnRefund,
+        createdAt: user.createdAt,
+      },
+      jobs: {
+        asClient: user.jobsAsClient,
+        asFreelancer: user.jobsAsFreelancer,
+      },
+      proposals: user.proposals,
+      messages: relatedMessages,
+      deliverables: user.uploadedDeliverables,
+      ratings: {
+        given: user.ratingsGiven,
+        received: user.ratingsReceived,
+      },
+      savedJobs: user.savedJobs,
+      notifications: user.notifications,
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// DELETE /api/users/me — GDPR / CCPA account erasure (Issue #310)
+usersRouter.delete("/me", requireAuth, async (_req, res, next) => {
+  try {
+    const user = await prisma.user.findUnique({
+      where: { stellarAddress: res.locals.stellarAddress },
+      select: { id: true, stellarAddress: true },
+    });
+    if (!user) throw new AppError(404, "User not found");
+
+    // 1. Redact personal identifiable information on User record
+    await prisma.user.update({
+      where: { id: user.id },
+      data: {
+        displayName: null,
+        email: null,
+        bio: null,
+        notifyOnDispute: false,
+        notifyOnRelease: false,
+        notifyOnRefund: false,
+      },
+    });
+
+    // 2. Delete personal unassociated off-chain drafts and user alerts
+    await prisma.savedJob.deleteMany({ where: { userId: user.id } });
+    await prisma.notification.deleteMany({ where: { userId: user.id } });
+    await prisma.userSession.deleteMany({ where: { userId: user.id } });
+
+    // Clean up unassociated off-chain draft jobs (never funded and no assigned freelancer)
+    const draftJobs = await prisma.job.findMany({
+      where: {
+        clientId: user.id,
+        escrowId: null,
+        freelancerId: null,
+        status: "CREATED",
+      },
+      select: { id: true },
+    });
+    if (draftJobs.length > 0) {
+      const draftIds = draftJobs.map((j) => j.id);
+      await prisma.milestone.deleteMany({ where: { jobId: { in: draftIds } } });
+      await prisma.proposal.deleteMany({ where: { jobId: { in: draftIds } } });
+      await prisma.job.deleteMany({ where: { id: { in: draftIds } } });
+    }
+
+    // Audit logging for account erasure
+    console.info(
+      `[audit] GDPR account erasure executed for user ${user.stellarAddress} (${user.id}) at ${new Date().toISOString()}`,
+    );
+
+    res.json({
+      message: "Account data erased and personal details redacted successfully",
+      stellarAddress: user.stellarAddress,
+      redacted: true,
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// GET /api/users/:address
+usersRouter.get("/:address", async (req, res, next) => {
+  try {
+    const user = await prisma.user.findUnique({
+      where: { stellarAddress: req.params.address },
+      include: { _count: { select: { jobsAsFreelancer: true, jobsAsClient: true } } },
     });
     if (!user) throw new AppError(404, "User not found");
     res.json(user);
