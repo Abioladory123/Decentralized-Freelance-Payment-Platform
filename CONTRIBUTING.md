@@ -61,6 +61,9 @@ docker compose up --build
 ### Option B — manual
 
 ```bash
+# Root (install husky pre-commit hooks)
+npm install
+
 # Contracts
 cd contracts
 cargo test
@@ -211,6 +214,28 @@ npx tsc --noEmit
 Cross-contract tests live in `contracts/dispute/tests/full_flow.rs` and deploy
 real instances of all three contracts in the Soroban test environment. Every new
 contract function must ship with tests for both its success and failure paths.
+
+### Git pre-commit hooks
+
+This repository uses [Husky](https://typicode.github.io/husky/) and [lint-staged](https://github.com/lint-staged/lint-staged) to enforce linting and formatting standards automatically on `git commit`.
+
+To install and initialize the hooks:
+
+```bash
+npm install
+```
+
+When committing staged files, the pre-commit hook automatically runs:
+- `cargo fmt --manifest-path contracts/Cargo.toml --all -- --check` on staged Rust files in `contracts/`.
+- `npm run lint` on staged frontend files in `frontend/`.
+
+If formatting or linting errors are detected, the commit will be rejected. Fix the reported issues, stage the changes, and commit again.
+
+To bypass the pre-commit hook when necessary (e.g. temporary work-in-progress commits):
+
+```bash
+git commit --no-verify -m "wip: checkpoint"
+```
 
 ### Before opening a PR
 
