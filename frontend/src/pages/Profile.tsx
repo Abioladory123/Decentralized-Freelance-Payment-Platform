@@ -24,6 +24,7 @@ import { useEffect, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import Layout from "../components/Layout";
 import AddressField from "../components/AddressField";
+import InviteLink from "../components/InviteLink";
 import StatusBadge from "../components/StatusBadge";
 import { useEscrow, type ReputationView } from "../hooks/useEscrow";
 import { useWallet } from "../hooks/wallet-context";
@@ -214,6 +215,9 @@ export default function Profile() {
           Address: <AddressField address={address} label="profile address" qr />
         </p>
       )}
+
+      {/* Generate a job-form link with this address pre-filled (issue #80). */}
+      {address && <InviteLink address={address} />}
 
       {reputationLoading && (
         <p role="status" aria-live="polite" className="muted">

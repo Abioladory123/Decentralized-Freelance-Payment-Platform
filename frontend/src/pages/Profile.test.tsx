@@ -282,6 +282,17 @@ describe("Profile reputation", () => {
   });
 });
 
+describe("Profile invite link (#80)", () => {
+  it("offers a job-form link that pre-fills this freelancer's address", async () => {
+    render(<Profile />);
+
+    const link = await screen.findByRole("link", { name: "Open the job form" });
+    expect(link.getAttribute("href")).toBe(`/post?freelancer=${ADDRESS}`);
+    // The full link is printed too, as a fallback when copying is unavailable.
+    expect(screen.getByText(`${window.location.origin}/post?freelancer=${ADDRESS}`)).toBeTruthy();
+  });
+});
+
 describe("Profile job history (#69)", () => {
   it("lists past jobs with the role, the status and a link to the escrow", async () => {
     h.api.fetchUserJobs.mockResolvedValue([
