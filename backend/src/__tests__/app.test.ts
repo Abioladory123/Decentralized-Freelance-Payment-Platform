@@ -70,6 +70,59 @@ describe("GET /health", () => {
   });
 });
 
+describe("GET /ready", () => {
+  it("returns 200 with status ok when DB and indexer are healthy", async () => {
+    const { prisma } = await import("../db");
+    vi.spyOn(prisma, "$queryRaw").mockResolvedValueOnce([{ "?column?": 1 }]);
+    vi.spyOn(prisma.indexerCursor, "findUnique").mockResolvedValue({
+      id: "main",
+      lastLedger: 100,
+      updatedAt: new Date(),
+    } as any);
+
+    let server!: Server;
+    const { createApp } = await import("../app");
+    const app = createApp();
+    await new Promise<void>((resolve) => {
+      server = app.listen(0, "127.0.0.1", resolve);
+    });
+    const address = server.address();
+    if (address === null || typeof address === "string") throw new Error("no port assigned");
+    const baseUrl = `http://127.0.0.1:${address.port}`;
+    
+    const res = await fetch(`${baseUrl}/ready`);
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { status: string; db: boolean; indexer: boolean };
+    expect(body.status).toBe("ok");
+    expect(body.db).toBe(true);
+    expect(body.indexer).toBe(true);
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+  });
+
+  it("returns 503 when database is unreachable", async () => {
+    const { prisma } = await import("../db");
+    vi.spyOn(prisma, "$queryRaw").mockRejectedValueOnce(new Error("Connection refused"));
+    
+    let server!: Server;
+    const { createApp } = await import("../app");
+    const app = createApp();
+    await new Promise<void>((resolve) => {
+      server = app.listen(0, "127.0.0.1", resolve);
+    });
+    const address = server.address();
+    if (address === null || typeof address === "string") throw new Error("no port assigned");
+    const baseUrl = `http://127.0.0.1:${address.port}`;
+    
+    const res = await fetch(`${baseUrl}/ready`);
+    expect(res.status).toBe(503);
+    const body = (await res.json()) as { status: string; db: boolean; indexer: boolean };
+    expect(body.status).toBe("unhealthy");
+    expect(body.db).toBe(false);
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+    vi.unstubAllEnvs();
+  });
+});
+
 
 describe("stellar address validation", () => {
   it("accepts checksum-valid G addresses", () => {

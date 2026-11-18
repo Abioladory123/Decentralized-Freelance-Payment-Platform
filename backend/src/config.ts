@@ -37,6 +37,12 @@ const schema = z.object({
   // Configures Express 'trust proxy' so rate limiting keys on the real client IP.
   // 0 disables proxy trust (default).
   TRUST_PROXY: z.coerce.number().int().min(0).default(0),
+  // Alert webhook URL (Slack, Discord, PagerDuty, or custom webhook) for indexer lag and dead-letter growth (issue #306).
+  ALERT_WEBHOOK_URL: z.string().default(""),
+  // Maximum allowed difference between chain tip ledger and indexer cursor before alerting.
+  INDEXER_LAG_ALERT_THRESHOLD: z.coerce.number().int().positive().default(1000),
+  // Maximum unhandled dead-letter rows before alerting.
+  DEAD_LETTER_ALERT_THRESHOLD: z.coerce.number().int().positive().default(10),
 });
 
 const parsed = schema.safeParse(process.env);

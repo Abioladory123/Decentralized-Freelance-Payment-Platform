@@ -2,7 +2,7 @@
 #
 #   docker compose up --build
 #
-# Backend:  http://localhost:3000  (GET /health)
+# Backend:  http://localhost:3000  (GET /health, GET /ready)
 # Frontend: http://localhost:5173
 #
 # Every VITE_* value the frontend reads is optional here; set it in the shell or

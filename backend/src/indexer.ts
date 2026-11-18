@@ -64,10 +64,10 @@ import {
   type ContractEventLike,
 } from "./lib/events";
 import {
-  notifyDisputeOpened,
-  notifyMilestoneReleased,
   notifyEscrowRefunded,
+  maskAddresses,
 } from "./lib/notifications";
+import { checkIndexerLagAlert } from "./lib/alerts";
 
 const CURSOR_ID = "main";
 export const EVENT_PAGE_LIMIT = 100;
@@ -213,6 +213,12 @@ async function poll() {
     };
 
     await processContractEvents(source, cursor, CONTRACT_IDS);
+
+    try {
+      await checkIndexerLagAlert({ rpcServer });
+    } catch (alertErr) {
+      console.error("[indexer] Alert check error:", alertErr);
+    }
   } catch (err) {
     console.error("[indexer] Poll error:", err);
   }
@@ -635,8 +641,8 @@ async function notifyParticipants(
             userId,
             jobId: job.id,
             type,
-            title,
-            message,
+            title: maskAddresses(title),
+            message: maskAddresses(message),
           },
         }),
       ),

@@ -101,8 +101,9 @@ describe("OpenAPI document", () => {
 
     const missing = (await allRouterRoutes()).filter((route) => !documented.has(route));
     expect(missing).toEqual([]);
-    // Plus the liveness probe, which is registered on the app rather than a router.
+    // Plus the liveness and readiness probes, which are registered on the app rather than a router.
     expect(documented.has("GET /health")).toBe(true);
+    expect(documented.has("GET /ready")).toBe(true);
   });
 
   it("derives a request body from the route's Zod schema", async () => {

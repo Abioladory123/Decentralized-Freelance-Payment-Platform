@@ -1,5 +1,5 @@
 import { describe, expect, it, vi, beforeEach, afterEach } from "vitest";
-import { AppError, DatabaseTimeoutError, errorHandler } from "../middleware/errorHandler";
+import { AppError, DatabaseTimeoutError, errorHandler, isTimeoutError } from "../middleware/errorHandler";
 import type { NextFunction, Request, Response } from "express";
 
 describe("errorHandler", () => {
@@ -7,9 +7,10 @@ describe("errorHandler", () => {
   let res: Partial<Response>;
   let jsonMock: ReturnType<typeof vi.fn>;
   let statusMock: ReturnType<typeof vi.fn>;
-  let consoleErrorSpy: ReturnType<typeof vi.spyOn>;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  let consoleErrorSpy: any;
   const originalNodeEnv = process.env.NODE_ENV;
-  const noopNext = (() => {}) as unknown as NextFunction;
+  const noopNext = (() => { }) as unknown as NextFunction;
 
   beforeEach(() => {
     jsonMock = vi.fn();
@@ -21,7 +22,7 @@ describe("errorHandler", () => {
     res = {
       status: statusMock as unknown as Response["status"],
     };
-    consoleErrorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    consoleErrorSpy = vi.spyOn(console, "error").mockImplementation(() => { });
   });
 
   afterEach(() => {
