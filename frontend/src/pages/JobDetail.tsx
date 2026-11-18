@@ -39,6 +39,7 @@ import AddressField from "../components/AddressField";
 import FiatEstimate from "../components/FiatEstimate";
 import JobDetailSkeleton from "../components/JobDetailSkeleton";
 import Conversation from "../components/Conversation";
+import DisputeEvidence from "../components/DisputeEvidence";
 import { useEscrow, type EscrowView } from "../hooks/useEscrow";
 import { useWallet } from "../hooks/wallet-context";
 import { explorerTxUrl } from "../lib/stellar";
@@ -753,6 +754,16 @@ export default function JobDetail() {
                     ? "Reclaiming…"
                     : "Reclaim after timeout"}
                 </button>
+              )}
+
+              {/* Notes and attachments the parties submitted (#78). The
+                  off-chain dispute row is the id the evidence API scopes to;
+                  it is loaded for participants once the job resolves. */}
+              {isParticipant && offChainJob?.disputes?.[0] && (
+                <DisputeEvidence
+                  disputeId={offChainJob.disputes[0].id}
+                  status={offChainJob.disputes[0].status}
+                />
               )}
             </section>
           )}

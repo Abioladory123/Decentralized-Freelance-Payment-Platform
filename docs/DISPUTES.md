@@ -139,12 +139,39 @@ The `clientShare`/`freelancerShare` of a `REFUNDED` dispute are **not** a
 settlement split: a refund sends the entire remaining balance to the client, and
 the indexer does not invent a share split it was never told.
 
+## Evidence (issue #78)
+
+A dispute's `reason` is a short string written when it is raised. Before the
+panel rules, each party can also attach **evidence**: a free-text note, a file,
+or both. Evidence is off-chain and never touches the contracts — arbitration
+still keys on the on-chain dispute id and the approved split.
+
+- **Who may write.** Only the job's client and freelancer, and only while the
+dispute is `RAISED`. `PENDING` is an intent that never reached the chain;
+`UNDER_REVIEW` means arbitration has started, and `RESOLVED`/`REFUNDED` are
+closed. Those states return `409` (or `404` for a `PENDING` dispute, which is
+not visible at all).
+- **Who may read.** The two parties and addresses in `ARBITRATOR_ADDRESSES`.
+  This is tighter than the dispute row itself (`GET /api/disputes/:id` is
+  public): attachments can be private work product. An empty panel grants
+  nobody, the same fail-closed rule as resolution.
+- **Shape.** `DisputeEvidence` rows carry `note`, `fileName`, `fileUrl`,
+  `fileSize`, `fileType` and the author. The attachment follows the milestone
+  deliverable pattern: an external `http(s)` URL or an inline `data:` URL from
+  the browser's FileReader, capped at **2 MiB** by both the request schema and
+  the form. That keeps attachments in the existing storage path; a deployment
+  with object storage can store the uploaded object's URL in `fileUrl` instead.
+- **Ordering.** Reads are oldest-first so the panel sees the exchange in the
+  order it happened.
+
 ## API summary
 
 | Route | Who | What it does |
 |-------|-----|--------------|
 | `POST /api/disputes` | a party | Upserts the job's dispute row (the reason lives here) and returns the `escrow.open_dispute` XDR. Idempotent per job. |
 | `GET /api/disputes/:id` | anyone | The row, with its party addresses. |
+| `GET /api/disputes/:id/evidence` | a party or an `ARBITRATOR_ADDRESSES` member | Notes and attachments, oldest first. |
+| `POST /api/disputes/:id/evidence` | a party | Adds a note and/or attachment while the dispute is `RAISED`. |
 | `POST /api/disputes/:id/raise` | a party | Returns the `dispute.raise` XDR, using the stored reason. `409` if the dispute is already on-chain. |
 | `POST /api/disputes/:id/sync` | a party | Records the on-chain dispute id returned by `raise`. |
 | `POST /api/disputes/:id/resolve` | an `ARBITRATOR_ADDRESSES` member | Returns the `dispute.arbitrate` XDR for a split. `409` until the dispute is on-chain. Shares are whole units of the **job's** asset and are converted at that asset's `decimals` (issue #35), so a non-7-decimal token is encoded correctly; an asset the registry does not know is a `400`. |

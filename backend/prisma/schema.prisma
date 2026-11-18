@@ -30,6 +30,7 @@ model User {
   uploadedDeliverables Deliverable[] @relation("UploadedDeliverables")
   ratingsGiven     Rating[]   @relation("RatingsGiven")
   ratingsReceived  Rating[]   @relation("RatingsReceived")
+  disputeEvidence  DisputeEvidence[] @relation("DisputeEvidenceAuthor")
   savedJobs        SavedJob[]
   notifications    Notification[] @relation("UserNotifications")
   messagesSent     Message[]  @relation("MessagesSent")
@@ -170,6 +171,9 @@ model Dispute {
   resolvedAt       DateTime?
   createdAt        DateTime      @default(now())
 
+  /// Notes and attachments each party submitted before arbitration (#78).
+  evidence         DisputeEvidence[]
+
   // No @@index([jobId]): GET /api/jobs/:id `include: { disputes: true }` and the
   // indexer's `dispute.updateMany({ where: { job: { escrowId } } })` both read by
   // jobId, and the unique constraint above is that index.
@@ -179,7 +183,8 @@ enum DisputeStatus {
   /// The off-chain intent exists, but `dispute.raise` has not been confirmed.
   /// Never user-visible on its own.
   PENDING
-  /// `dispute.raise` confirmed; the on-chain id is recorded.
+  /// `dispute.raise` confirmed; the on-chain id is recorded. Evidence may be
+  /// added while the dispute is in this state (“before arbitration”).
   RAISED
   UNDER_REVIEW
   /// A panel ruled and the escrow was resolved with a split.
@@ -187,6 +192,38 @@ enum DisputeStatus {
   /// The escrow was refunded (expiry or dispute timelock) with no ruling.
   /// Terminal: a refunded dispute is no longer open.
   REFUNDED
+}
+
+// ---------------------------------------------------------------------------
+// DisputeEvidence — notes and attachments submitted by the parties (#78)
+//
+// A dispute used to carry only its short `reason`. Each party is now able to
+// add notes and file attachments while the dispute is RAISED (before the panel
+// starts arbitration), and the panel reads them through the API alongside the
+// reason.
+//
+// Authorization is route-level: the author must be the job's client or
+// freelancer, and reads are limited to those two parties and the configured
+// arbitrators. The file follows the Deliverable pattern: either an external
+// http(s) URL or an inline `data:` URL produced by the browser's FileReader,
+// with a size cap enforced by the request schema.
+// ---------------------------------------------------------------------------
+model DisputeEvidence {
+  id        String   @id @default(cuid())
+  disputeId String
+  dispute   Dispute  @relation(fields: [disputeId], references: [id], onDelete: Cascade)
+  authorId  String
+  author    User     @relation("DisputeEvidenceAuthor", fields: [authorId], references: [id])
+  /// The party's written submission. Null when only a file was attached.
+  note      String?
+  fileName  String?
+  fileUrl   String?
+  fileSize  Int?
+  fileType  String?
+  createdAt DateTime @default(now())
+
+  // Reads are "this dispute's evidence, oldest first".
+  @@index([disputeId, createdAt])
 }
 
 // ---------------------------------------------------------------------------
