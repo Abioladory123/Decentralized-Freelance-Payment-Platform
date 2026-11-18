@@ -13,6 +13,12 @@ dist/
 .env.contracts
 
 
+# Test outputs
+test-results/
+playwright-report/
+frontend/test-results/
+frontend/playwright-report/
+
 # IDE
 .vscode/
 .idea/
