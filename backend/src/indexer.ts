@@ -263,7 +263,14 @@ async function poll() {
     await processContractEvents(source, cursor, CONTRACT_IDS);
 
     try {
-      await checkIndexerLagAlert({ rpcServer });
+      // The event response just reported the chain tip at this poll, so the lag
+      // check reads it from there instead of spending a second RPC request on
+      // `getLatestLedger` (issue #292). The fallback keeps the check working if
+      // no event response was produced.
+      await checkIndexerLagAlert({
+        latestLedger: cachedChainTip ?? undefined,
+        rpcServer,
+      });
     } catch (alertErr) {
       console.error("[indexer] Alert check error:", alertErr);
     }
