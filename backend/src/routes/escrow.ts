@@ -78,7 +78,14 @@ function assetForJob(assetSymbol: string) {
 async function loadEditableJob(escrowId: bigint, address: string) {
   const job = await prisma.job.findUnique({
     where: { escrowId },
-    include: { client: true },
+    include: {
+      client: true,
+      milestones: {
+        include: {
+          deliverables: true,
+        },
+      },
+    },
   });
   if (!job) throw new AppError(404, "No job is linked to that escrow id");
   if (job.client.stellarAddress !== address) {
@@ -160,6 +167,15 @@ escrowRouter.post(
     try {
       const { escrowId, milestones } = req.body as z.infer<typeof updateMilestonesSchema>;
       const job = await loadEditableJob(BigInt(escrowId), res.locals.stellarAddress);
+
+      // Disallow updating milestones if deliverables already exist (issue #270)
+      const hasDeliverables = (job.milestones as Array<{ deliverables?: unknown[] }> | undefined)?.some(
+        (m) => Array.isArray(m.deliverables) && m.deliverables.length > 0,
+      );
+      if (hasDeliverables) {
+        throw new AppError(400, "Cannot delete or update milestones with attached deliverables");
+      }
+
       const asset = assetForJob(job.asset);
 
       const contract = new Contract(config.ESCROW_CONTRACT_ID);
@@ -208,6 +224,24 @@ escrowRouter.put(
       const escrowId = BigInt(escrowIdText);
       const { milestones } = req.body as z.infer<typeof recordMilestonesSchema>;
       const job = await loadEditableJob(escrowId, res.locals.stellarAddress);
+
+      // Check if any existing milestones have attached deliverables (issue #270).
+      // Disallow deleting/updating milestones if deliverables already exist to preserve work audit trail.
+      const hasDeliverables = (job.milestones as Array<{ deliverables?: unknown[] }> | undefined)?.some(
+        (m) => Array.isArray(m.deliverables) && m.deliverables.length > 0,
+      );
+      if (hasDeliverables) {
+        throw new AppError(400, "Cannot delete or update milestones with attached deliverables");
+      }
+      if (typeof (prisma as unknown as { deliverable?: { count: (args: unknown) => Promise<number> } }).deliverable?.count === "function") {
+        const count = await (prisma as unknown as { deliverable: { count: (args: unknown) => Promise<number> } }).deliverable.count({
+          where: { milestone: { jobId: job.id } },
+        });
+        if (count > 0) {
+          throw new AppError(400, "Cannot delete or update milestones with attached deliverables");
+        }
+      }
+
       const asset = assetForJob(job.asset); // reject an asset the registry does not know
 
       // Sum in base units (see POST /api/jobs): a float total would store
