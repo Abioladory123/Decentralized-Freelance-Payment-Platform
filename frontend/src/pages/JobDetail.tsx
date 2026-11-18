@@ -467,7 +467,7 @@ export default function JobDetail() {
 
       {!publicKey && (
         <p>
-          <button onClick={() => void connect()}>Connect Freighter</button> to act on this
+          <button onClick={() => void connect()}>Connect a wallet</button> to act on this
           job. Reading it needs no wallet.
         </p>
       )}

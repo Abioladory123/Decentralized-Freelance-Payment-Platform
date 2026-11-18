@@ -54,7 +54,7 @@ function Nav() {
           </>
         ) : (
           <button onClick={() => void connect()} disabled={connecting}>
-            {connecting ? "Connecting…" : "Connect Freighter"}
+            {connecting ? "Connecting…" : "Connect Wallet"}
           </button>
         )}
       </span>
@@ -81,7 +81,7 @@ function NetworkMismatchBanner() {
         textAlign: "center",
       }}
     >
-      Freighter is connected to a different network. Please switch to {networkName} in your wallet.
+      Your wallet is connected to a different network. Please switch to {networkName} in your wallet.
     </div>
   );
 }

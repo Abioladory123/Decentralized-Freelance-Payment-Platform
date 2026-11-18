@@ -11,6 +11,7 @@
     "test:e2e": "playwright test"
   },
   "dependencies": {
+    "@lobstrco/signer-extension-api": "^3.0.0",
     "@sentry/react": "^11.14.0",
     "@stellar/stellar-sdk": "^12.3.0",
     "qrcode.react": "^4.2.0",
