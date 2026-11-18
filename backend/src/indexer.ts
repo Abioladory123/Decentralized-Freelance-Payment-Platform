@@ -63,7 +63,6 @@ import {
   eventEscrowId,
   type ContractEventLike,
 } from "./lib/events";
-export type { ContractEventLike };
 import {
   notifyEscrowRefunded,
   maskAddresses,
