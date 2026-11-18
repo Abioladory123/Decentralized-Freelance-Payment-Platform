@@ -215,6 +215,33 @@ Cross-contract tests live in `contracts/dispute/tests/full_flow.rs` and deploy
 real instances of all three contracts in the Soroban test environment. Every new
 contract function must ship with tests for both its success and failure paths.
 
+### Running contract tests on Windows (Docker & WSL2)
+
+Building and executing `cargo test` directly on Windows (especially with MinGW/GNU toolchains) fails due to Windows PE/COFF symbol table export limits:
+
+```text
+ld: error: export ordinal too large: 73648
+```
+
+The Windows PE/COFF binary format limits symbol export ordinals to 65,535. The Soroban test runtime pulls in host mock dependencies that exceed this limit.
+
+To test contracts cleanly on Windows, use one of the following options:
+
+1. **Containerized test runner (Docker)**:
+   ```bash
+   ./scripts/test_contracts_docker.sh
+   # On Windows Command Prompt / PowerShell:
+   scripts\test_contracts_docker.bat
+   # Or using the cross-platform wrapper:
+   ./scripts/test_contracts.sh
+   ```
+2. **Windows Subsystem for Linux (WSL2)**:
+   ```bash
+   # From WSL2 Ubuntu / Debian terminal:
+   cd contracts
+   cargo test
+   ```
+
 ### Git pre-commit hooks
 
 This repository uses [Husky](https://typicode.github.io/husky/) and [lint-staged](https://github.com/lint-staged/lint-staged) to enforce linting and formatting standards automatically on `git commit`.
