@@ -155,6 +155,8 @@ function freelancerDirectoryCacheKey(params: {
   ]);
 }
 
+const FREELANCER_DIRECTORY_CACHE_CONTROL = `public, max-age=${FREELANCER_DIRECTORY_TTL_MS / 1000}`;
+
 const getFreelancersHandler = async (
   req: Request,
   res: Response,
@@ -177,8 +179,7 @@ const getFreelancersHandler = async (
     const cached = freelancerDirectoryCache.get<FreelancerDirectoryPayload>(cacheKey);
     if (cached) {
       res.set("X-Cache", "HIT");
-      res.set("Cache-Control", `public, max-age=${FREELANCER_DIRECTORY_TTL_MS / 1000}`);
-      res.json(cached);
+      sendCachedJson(req, res, cached, FREELANCER_DIRECTORY_CACHE_CONTROL);
       return;
     }
 
@@ -276,8 +277,7 @@ const getFreelancersHandler = async (
     // the next request, not replayed for the TTL.
     freelancerDirectoryCache.set(cacheKey, payload);
     res.set("X-Cache", "MISS");
-    res.set("Cache-Control", `public, max-age=${FREELANCER_DIRECTORY_TTL_MS / 1000}`);
-    res.json(payload);
+    sendCachedJson(req, res, payload, FREELANCER_DIRECTORY_CACHE_CONTROL);
   } catch (err) {
     next(err);
   }
