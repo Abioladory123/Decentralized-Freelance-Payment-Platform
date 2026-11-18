@@ -23,19 +23,19 @@ afterEach(() => {
 });
 
 describe("catch-all route", () => {
-  it("renders the NotFound page for an unknown path", () => {
+  it("renders the NotFound page for an unknown path", async () => {
     render(<App />);
 
-    expect(screen.getByRole("heading", { name: /page not found/i })).toBeDefined();
+    expect(await screen.findByRole("heading", { name: /page not found/i })).toBeDefined();
     expect(
       screen.getByText(/the page you requested does not exist or has been moved/i),
     ).toBeDefined();
   });
 
-  it("links back to the Dashboard", () => {
+  it("links back to the Dashboard", async () => {
     render(<App />);
 
-    const link = screen.getByRole("link", { name: /back to dashboard/i });
+    const link = await screen.findByRole("link", { name: /back to dashboard/i });
     expect(link.getAttribute("href")).toBe("/");
   });
 });

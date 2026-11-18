@@ -173,18 +173,21 @@ backend's `CORS_ORIGIN` to `https://stellar-freelance-frontend.vercel.app`.
   but events raised while it was asleep are applied late rather than immediately.
 - **`autoDeployTrigger` is `off`** so a `git push` does not ship to production without a
   green CI run. Deploy from the dashboard, or `render deploys create <service>`.
-- **First request after a spin-down is slow** — Render has to boot the container
-  and apply migrations before `/health` answers.
+- **First request after a spin-down boots quickly** — database migrations are
+  separated from web server container startup (issue #302). Migrations execute once during
+  Render's `preDeployCommand` phase (or in a dedicated migration init container in docker compose)
+  before web containers boot, preventing concurrency deadlocks during replica scaling.
 - The Blueprint creates no database on purpose (the free Render Postgres tier
   expires). To use Render's Postgres instead, add a `databases:` block and point
   `DATABASE_URL` at it with `fromDatabase`.
 
-Build is `backend/Dockerfile`; it runs `npx prisma migrate deploy && node dist/server.js`,
-so migrations apply on boot. Attach a PostgreSQL instance and set:
+Build is `backend/Dockerfile`; it executes `node dist/server.js`. Attach a PostgreSQL instance and set:
 
 | Variable | Notes |
 |----------|-------|
 | `DATABASE_URL` | connection string for the managed Postgres |
+| `DATABASE_POOL_SIZE` | optional Prisma connection pool limit (default `10`). Recommended setting: `num_physical_cores * 2 + 1` or sized to container memory/connections to prevent pool starvation (P2024 error) under high concurrency |
+| `DATABASE_TIMEOUT_MS` | optional database query statement timeout and pool acquisition timeout in ms (default `10000`) |
 | `JWT_SECRET` | **at least 32 characters** — the config schema exits the process otherwise |
 | `NODE_ENV` | `production` |
 | `STELLAR_NETWORK` | `testnet` |

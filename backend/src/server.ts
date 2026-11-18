@@ -1,12 +1,28 @@
 import "dotenv/config";
+import { initTracing, shutdownTracing } from "./lib/tracing";
 import { createApp } from "./app";
 import { config } from "./config";
 import { prisma } from "./db";
 import { startIndexer } from "./indexer";
 import { createShutdownHandler } from "./lib/shutdown";
+import { verifyContractConfigurationSync } from "./lib/contractFreshness";
 
 async function main() {
+  await initTracing();
   await prisma.$connect();
+
+  // Automated contract configuration drift check (issue #316)
+  if (config.ESCROW_CONTRACT_ID || config.DISPUTE_CONTRACT_ID) {
+    try {
+      await verifyContractConfigurationSync({
+        escrowContractId: config.ESCROW_CONTRACT_ID,
+        disputeContractId: config.DISPUTE_CONTRACT_ID,
+        arbitratorAddresses: config.ARBITRATOR_ADDRESSES,
+      });
+    } catch (err) {
+      console.warn("[config] Contract configuration verification warning:", err);
+    }
+  }
 
   const app = createApp();
   // Keep the `listen` handle: closing it is what lets in-flight requests finish
@@ -24,7 +40,10 @@ async function main() {
       new Promise<void>((resolve, reject) => {
         server.close((err) => (err ? reject(err) : resolve()));
       }),
-    disconnect: () => prisma.$disconnect(),
+    disconnect: async () => {
+      await prisma.$disconnect();
+      await shutdownTracing();
+    },
     exit: (code) => process.exit(code),
   });
 

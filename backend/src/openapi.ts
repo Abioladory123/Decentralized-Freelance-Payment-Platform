@@ -48,6 +48,8 @@ import {
 } from "./routes/disputes";
 import { submitSchema } from "./routes/reputation";
 import { sendMessageSchema } from "./routes/messages";
+import { verifyJobSchema } from "./routes/jobs";
+import { createWebhookSchema } from "./routes/webhooks";
 
 // Patches `z` so schemas can be annotated/registered. Called once, before any
 // schema below is registered.
@@ -122,6 +124,8 @@ const job = registry.register(
     createdAt: z.string().datetime(),
     updatedAt: z.string().datetime(),
     expiresAt: z.string().datetime().nullable(),
+    isVerified: z.boolean().default(false),
+    verificationSource: z.string().nullable().optional(),
     milestones: z.array(milestone).optional(),
     client: publicUser.optional(),
     freelancer: publicUser.nullable().optional(),
@@ -196,6 +200,20 @@ const jobListQuery = z.object({
   limit: z.coerce.number().int().positive().default(20),
 });
 
+const webhookSubscription = registry.register(
+  "WebhookSubscription",
+  z.object({
+    id: z.string(),
+    url: z.string().url(),
+    secret: z.string(),
+    events: z.array(z.string()),
+    isActive: z.boolean(),
+    userId: z.string().nullable(),
+    createdAt: z.string().datetime(),
+    updatedAt: z.string().datetime(),
+  }),
+);
+
 /** A `{ xdr }` response shared by every transaction-building route. */
 const json = (schema: ZodTypeAny, description: string) => ({
   description,
@@ -218,6 +236,14 @@ registry.registerPath({
   tags: ["System"],
   summary: "Liveness probe",
   responses: { 200: json(z.object({ status: z.string() }), "The service is up") },
+});
+
+registry.registerPath({
+  method: "get",
+  path: "/ready",
+  tags: ["System"],
+  summary: "Readiness probe",
+  responses: { 200: json(z.object({ status: z.string() }), "The service is ready to accept traffic") },
 });
 
 // ---------------------------------------------------------------------------
@@ -264,6 +290,56 @@ registry.registerPath({
   summary: "Get your own profile",
   security: auth,
   responses: { 200: json(publicUser, "The authenticated user"), 401: errors[401] },
+});
+
+registry.registerPath({
+  method: "get",
+  path: "/api/users/me/export",
+  tags: ["Users"],
+  summary: "Export personal data archive (GDPR / CCPA)",
+  description:
+    "Returns a structured JSON export of all personal profile information, proposals, deliverables metadata, ratings, and chat history.",
+  security: auth,
+  responses: {
+    200: json(
+      z.object({
+        exportedAt: z.string().datetime(),
+        profile: z.record(z.unknown()),
+        jobs: z.record(z.unknown()),
+        proposals: z.array(z.unknown()),
+        messages: z.array(z.unknown()),
+        deliverables: z.array(z.unknown()),
+        ratings: z.record(z.unknown()),
+        savedJobs: z.array(z.unknown()),
+        notifications: z.array(z.unknown()),
+      }),
+      "The user's personal data export archive",
+    ),
+    401: errors[401],
+    404: errors[404],
+  },
+});
+
+registry.registerPath({
+  method: "delete",
+  path: "/api/users/me",
+  tags: ["Users"],
+  summary: "Erase account and redact personal data (GDPR / CCPA)",
+  description:
+    "Redacts personal identifiable information (email, displayName, bio) and deletes unassociated off-chain drafts and personal alerts, while preserving on-chain escrow integrity.",
+  security: auth,
+  responses: {
+    200: json(
+      z.object({
+        message: z.string(),
+        stellarAddress: z.string(),
+        redacted: z.boolean(),
+      }),
+      "Account data erased and personal details redacted",
+    ),
+    401: errors[401],
+    404: errors[404],
+  },
 });
 
 registry.registerPath({
@@ -551,6 +627,25 @@ registry.registerPath({
 });
 
 registry.registerPath({
+  method: "patch",
+  path: "/api/jobs/{id}/verify",
+  tags: ["Jobs"],
+  summary: "Update grant / project verification status (admin only)",
+  security: auth,
+  request: {
+    params: z.object({ id: z.string() }),
+    body: { content: { "application/json": { schema: verifyJobSchema } } },
+  },
+  responses: {
+    200: json(job, "The verified job"),
+    400: errors[400],
+    401: errors[401],
+    403: errors[403],
+    404: errors[404],
+  },
+});
+
+registry.registerPath({
   method: "get",
   path: "/api/jobs/tags",
   tags: ["Jobs"],
@@ -702,7 +797,14 @@ registry.registerPath({
   summary: "Get escrow receipt",
   request: { params: z.object({ escrowId: z.string() }) },
   responses: {
-    200: json(z.record(z.unknown()), "Escrow receipt"),
+    200: {
+      ...json(z.record(z.unknown()), "Escrow receipt"),
+      headers: {
+        ETag: { schema: { type: "string" }, description: "Entity tag for caching" },
+        "Cache-Control": { schema: { type: "string" }, description: "Cache control directives" },
+      },
+    },
+    304: { description: "Not Modified - payload has not changed since previous request" },
     400: errors[400],
     404: errors[404],
   },
@@ -909,6 +1011,62 @@ registry.registerPath({
 });
 
 // ---------------------------------------------------------------------------
+// Webhooks (issue #313)
+// ---------------------------------------------------------------------------
+
+registry.registerPath({
+  method: "post",
+  path: "/api/webhooks",
+  tags: ["Webhooks"],
+  summary: "Register a webhook subscription",
+  request: {
+    body: { content: { "application/json": { schema: createWebhookSchema } } },
+  },
+  responses: {
+    201: json(webhookSubscription, "The registered webhook"),
+    400: errors[400],
+  },
+});
+
+registry.registerPath({
+  method: "get",
+  path: "/api/webhooks",
+  tags: ["Webhooks"],
+  summary: "List registered webhook subscriptions",
+  responses: {
+    200: json(z.array(webhookSubscription), "Webhook list"),
+  },
+});
+
+registry.registerPath({
+  method: "get",
+  path: "/api/webhooks/{id}",
+  tags: ["Webhooks"],
+  summary: "Get single webhook subscription",
+  request: {
+    params: z.object({ id: z.string() }),
+  },
+  responses: {
+    200: json(webhookSubscription, "The webhook subscription"),
+    404: errors[404],
+  },
+});
+
+registry.registerPath({
+  method: "delete",
+  path: "/api/webhooks/{id}",
+  tags: ["Webhooks"],
+  summary: "Delete a webhook subscription",
+  request: {
+    params: z.object({ id: z.string() }),
+  },
+  responses: {
+    200: json(z.object({ deleted: z.boolean(), id: z.string() }), "Deletion confirmation"),
+    404: errors[404],
+  },
+});
+
+// ---------------------------------------------------------------------------
 // Document
 // ---------------------------------------------------------------------------
 
@@ -936,5 +1094,6 @@ export const openApiDocument = new OpenApiGeneratorV3(registry.definitions).gene
     { name: "Disputes", description: "Raise, sync and arbitrate disputes" },
     { name: "Reputation", description: "On-chain ratings and aggregates" },
     { name: "Messages", description: "Job-scoped conversation between the two participants" },
+    { name: "Webhooks", description: "Event delivery subscriptions for external integrations" },
   ],
 });

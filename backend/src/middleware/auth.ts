@@ -62,3 +62,33 @@ export const requireAuth: RequestHandler = async (req, res, next) => {
     }
   }
 };
+
+/**
+ * Optional authentication middleware.
+ * If a valid Bearer token is provided, sets res.locals.stellarAddress.
+ * If no authorization header is provided or token is invalid/expired, continues as unauthenticated.
+ */
+export const optionalAuth: RequestHandler = async (req, res, next) => {
+  const header = req.headers.authorization;
+  if (!header?.startsWith("Bearer ")) {
+    return next();
+  }
+  try {
+    const token = header.slice(7);
+    const { payload } = await jwtVerify(token, secret);
+    if (typeof payload.sub === "string") {
+      const tokenVersion = typeof payload.v === "number" ? payload.v : 0;
+      const user = await prisma.user.findUnique({
+        where: { stellarAddress: payload.sub },
+        select: { id: true, sessions: { select: { tokenVersion: true }, take: 1 } },
+      });
+      if (user && (user.sessions.length === 0 || tokenVersion >= user.sessions[0].tokenVersion)) {
+        res.locals.stellarAddress = payload.sub;
+      }
+    }
+  } catch {
+    // Treat invalid or expired token as unauthenticated caller for optional auth
+  }
+  next();
+};
+

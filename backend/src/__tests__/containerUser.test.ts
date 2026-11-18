@@ -47,6 +47,17 @@ describe("backend/Dockerfile", () => {
     expect(user, "runtime stage declares no USER — the API, the indexer and `prisma migrate deploy` all run as uid 0").not.toBeNull();
     expect(["root", "0", "0:0"], "runtime stage switches back to root").not.toContain(user);
   });
+
+  it("configures tini entrypoint and exec for graceful signal forwarding (issue #304)", () => {
+    const dockerfile = repoFile("backend", "Dockerfile");
+
+    // Installs tini in runtime stage
+    expect(dockerfile).toMatch(/apk\s+add[^\n]*\btini\b/);
+    // Sets tini as entrypoint
+    expect(dockerfile).toMatch(/ENTRYPOINT\s+\[.*tini.*\]/);
+    // Directly runs the node server process under tini (issues #304, #302)
+    expect(dockerfile).toMatch(/CMD\s+\[.*["']?node["']?.*dist\/server\.js.*\]/);
+  });
 });
 
 describe("docker-compose.yml + frontend/nginx.conf", () => {

@@ -22,6 +22,15 @@
 
 import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
+import {
+  Account,
+  BASE_FEE,
+  Contract,
+  Networks,
+  scValToNative,
+  SorobanRpc,
+  TransactionBuilder,
+} from "@stellar/stellar-sdk";
 
 /** The three contracts the event indexer follows. */
 export type ContractIdName = "escrow" | "dispute" | "reputation";
@@ -199,3 +208,254 @@ export function checkConfiguredContractIds(
 
   return freshness;
 }
+
+// ---------------------------------------------------------------------------
+// On-chain contract configuration sync verification (Issue #316)
+// ---------------------------------------------------------------------------
+
+const SIMULATION_ONLY_SOURCE = "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF";
+
+export interface OnChainContractSettings {
+  escrowDisputeContract?: string;
+  escrowDisputeTimeoutSeconds?: number | bigint;
+  disputeArbitrators?: string[];
+  disputeThreshold?: number;
+}
+
+export interface ExpectedContractSettings {
+  escrowContractId?: string;
+  disputeContractId?: string;
+  arbitratorAddresses?: string[];
+  disputeTimeoutSeconds?: number | bigint;
+  disputeThreshold?: number;
+}
+
+export interface ConfigDriftMismatch {
+  field:
+    | "escrow_dispute_contract"
+    | "dispute_arbitrators"
+    | "dispute_timeout_seconds"
+    | "dispute_threshold";
+  expected: string;
+  actual: string;
+}
+
+export type ContractConfigSyncStatus =
+  | { status: "synced" }
+  | { status: "unconfigured" }
+  | { status: "unverifiable"; reason: string }
+  | { status: "drifted"; mismatches: ConfigDriftMismatch[] };
+
+/**
+ * Pure comparison between expected backend contract environment settings and
+ * settings retrieved from live on-chain contract state.
+ */
+export function compareContractConfigurationSync(
+  expected: ExpectedContractSettings,
+  onChain: OnChainContractSettings,
+): ContractConfigSyncStatus {
+  if (!expected.escrowContractId && !expected.disputeContractId) {
+    return { status: "unconfigured" };
+  }
+
+  const mismatches: ConfigDriftMismatch[] = [];
+
+  // 1. Escrow's dispute_contract pointer
+  if (
+    expected.disputeContractId &&
+    onChain.escrowDisputeContract !== undefined &&
+    onChain.escrowDisputeContract !== expected.disputeContractId
+  ) {
+    mismatches.push({
+      field: "escrow_dispute_contract",
+      expected: expected.disputeContractId,
+      actual: onChain.escrowDisputeContract,
+    });
+  }
+
+  // 2. Escrow dispute timeout seconds
+  if (
+    expected.disputeTimeoutSeconds !== undefined &&
+    onChain.escrowDisputeTimeoutSeconds !== undefined &&
+    BigInt(onChain.escrowDisputeTimeoutSeconds) !== BigInt(expected.disputeTimeoutSeconds)
+  ) {
+    mismatches.push({
+      field: "dispute_timeout_seconds",
+      expected: String(expected.disputeTimeoutSeconds),
+      actual: String(onChain.escrowDisputeTimeoutSeconds),
+    });
+  }
+
+  // 3. Dispute arbitrators panel
+  if (
+    expected.arbitratorAddresses &&
+    expected.arbitratorAddresses.length > 0 &&
+    onChain.disputeArbitrators !== undefined
+  ) {
+    const expectedSorted = [...new Set(expected.arbitratorAddresses.map((a) => a.trim()))].sort();
+    const onChainSorted = [...new Set(onChain.disputeArbitrators.map((a) => a.trim()))].sort();
+    if (
+      expectedSorted.length !== onChainSorted.length ||
+      expectedSorted.some((addr, i) => addr !== onChainSorted[i])
+    ) {
+      mismatches.push({
+        field: "dispute_arbitrators",
+        expected: expectedSorted.join(", "),
+        actual: onChainSorted.join(", "),
+      });
+    }
+  }
+
+  // 4. Dispute threshold
+  if (
+    expected.disputeThreshold !== undefined &&
+    onChain.disputeThreshold !== undefined &&
+    onChain.disputeThreshold !== expected.disputeThreshold
+  ) {
+    mismatches.push({
+      field: "dispute_threshold",
+      expected: String(expected.disputeThreshold),
+      actual: String(onChain.disputeThreshold),
+    });
+  }
+
+  if (mismatches.length === 0) {
+    return { status: "synced" };
+  }
+
+  return { status: "drifted", mismatches };
+}
+
+/**
+ * Actionable critical error message when contract configuration drift is detected.
+ */
+export function describeContractDrift(result: ContractConfigSyncStatus): string | null {
+  if (result.status !== "drifted") return null;
+
+  const details = result.mismatches.map(
+    (m) => `  - ${m.field}: expected "${m.expected}", but on-chain state is "${m.actual}"`,
+  );
+
+  return (
+    "[config] Critical contract configuration drift detected between on-chain state and backend settings!\n" +
+    details.join("\n") +
+    "\nTransactions relying on these contracts will fail simulation or be rejected by access controls."
+  );
+}
+
+export interface VerifyContractSyncOptions {
+  escrowContractId?: string;
+  disputeContractId?: string;
+  arbitratorAddresses?: string | string[];
+  disputeTimeoutSeconds?: number | bigint;
+  disputeThreshold?: number;
+  sorobanServer?: SorobanRpc.Server;
+  log?: (message: string) => void;
+  readView?: (contractId: string, method: string) => Promise<unknown>;
+}
+
+/**
+ * Verify on-chain contract settings match backend environment configurations.
+ * Invokes view methods on Escrow (dispute_contract, dispute_timeout_seconds)
+ * and Dispute (arbitrators, threshold).
+ */
+export async function verifyContractConfigurationSync(
+  options: VerifyContractSyncOptions = {},
+): Promise<ContractConfigSyncStatus> {
+  const escrowContractId = options.escrowContractId ?? process.env.ESCROW_CONTRACT_ID ?? "";
+  const disputeContractId = options.disputeContractId ?? process.env.DISPUTE_CONTRACT_ID ?? "";
+  const arbitratorAddresses =
+    Array.isArray(options.arbitratorAddresses)
+      ? options.arbitratorAddresses
+      : (options.arbitratorAddresses ?? process.env.ARBITRATOR_ADDRESSES ?? "")
+          .split(",")
+          .map((a) => a.trim())
+          .filter(Boolean);
+  const log = options.log ?? console.warn;
+
+  if (!escrowContractId && !disputeContractId) {
+    return { status: "unconfigured" };
+  }
+
+  const reader =
+    options.readView ??
+    (async (contractId: string, method: string): Promise<unknown> => {
+      const rpcUrl = process.env.SOROBAN_RPC_URL;
+      if (!rpcUrl) throw new Error("SOROBAN_RPC_URL is not configured");
+      const server = options.sorobanServer ?? new SorobanRpc.Server(rpcUrl);
+      const network =
+        process.env.STELLAR_NETWORK === "mainnet" ? Networks.PUBLIC : Networks.TESTNET;
+      const account = new Account(SIMULATION_ONLY_SOURCE, "0");
+      const contract = new Contract(contractId);
+      const tx = new TransactionBuilder(account, { fee: BASE_FEE, networkPassphrase: network })
+        .addOperation(contract.call(method))
+        .setTimeout(30)
+        .build();
+
+      const sim = await server.simulateTransaction(tx);
+      if (SorobanRpc.Api.isSimulationSuccess(sim) && sim.result) {
+        return scValToNative(sim.result.retval);
+      }
+      throw new Error(
+        `Simulation failed for ${method}: ${SorobanRpc.Api.isSimulationError(sim) ? sim.error : "unknown error"}`,
+      );
+    });
+
+  const onChain: OnChainContractSettings = {};
+
+  try {
+    if (escrowContractId) {
+      const disputeContract = await reader(escrowContractId, "dispute_contract");
+      if (disputeContract !== undefined) {
+        onChain.escrowDisputeContract = String(disputeContract);
+      }
+      try {
+        const timeout = await reader(escrowContractId, "dispute_timeout_seconds");
+        if (timeout !== undefined) {
+          onChain.escrowDisputeTimeoutSeconds =
+            typeof timeout === "bigint" ? timeout : Number(timeout);
+        }
+      } catch {
+        // Optional parameter
+      }
+    }
+
+    if (disputeContractId) {
+      const arbitrators = await reader(disputeContractId, "arbitrators");
+      if (Array.isArray(arbitrators)) {
+        onChain.disputeArbitrators = arbitrators.map((a) => String(a));
+      }
+      try {
+        const threshold = await reader(disputeContractId, "threshold");
+        if (threshold !== undefined) {
+          onChain.disputeThreshold = Number(threshold);
+        }
+      } catch {
+        // Optional parameter
+      }
+    }
+  } catch (err) {
+    const reason = err instanceof Error ? err.message : String(err);
+    log(`[config] Could not verify on-chain contract sync: ${reason}`);
+    return { status: "unverifiable", reason };
+  }
+
+  const syncResult = compareContractConfigurationSync(
+    {
+      escrowContractId,
+      disputeContractId,
+      arbitratorAddresses,
+      disputeTimeoutSeconds: options.disputeTimeoutSeconds,
+      disputeThreshold: options.disputeThreshold,
+    },
+    onChain,
+  );
+
+  const driftWarning = describeContractDrift(syncResult);
+  if (driftWarning) {
+    log(driftWarning);
+  }
+
+  return syncResult;
+}
+

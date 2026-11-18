@@ -1,7 +1,14 @@
 import { describe, expect, it } from "vitest";
 import { scValToNative } from "@stellar/stellar-sdk";
 import { fromBaseUnits, toBaseUnits } from "./assets";
-import { fromStroops, milestonesToScVal, toStroops, type MilestoneInput } from "./stellar";
+import {
+  fromStroops,
+  generateSep0007Uri,
+  getTransactionHashFromXdr,
+  milestonesToScVal,
+  toStroops,
+  type MilestoneInput,
+} from "./stellar";
 
 describe("milestonesToScVal", () => {
   it("encodes the known input to the exact XDR the contract expects", () => {
@@ -80,5 +87,24 @@ describe("stroop conversion", () => {
     expect(toStroops(0.1)).toBe(1_000_000n);
     expect(fromStroops(15_000_000n)).toBeCloseTo(1.5);
     expect(fromStroops(toStroops(0.1))).toBeCloseTo(0.1);
+  });
+});
+
+describe("SEP-0007 URI and transaction hash helpers (issue #312)", () => {
+  it("generates a valid web+stellar:tx URI", () => {
+    const uri = generateSep0007Uri("AAAAtestxdr==", {
+      pubkey: "GBPLJHDI6RPLS4EEJJTM7EVEV3UNTXLFAACWA63QSTHGLWH5RO3LQ75B",
+      callback: "url:https://api.example.com/tx",
+    });
+
+    expect(uri).toContain("web+stellar:tx?");
+    expect(uri).toContain("xdr=AAAAtestxdr%3D%3D");
+    expect(uri).toContain("pubkey=GBPLJHDI6RPLS4EEJJTM7EVEV3UNTXLFAACWA63QSTHGLWH5RO3LQ75B");
+    expect(uri).toContain("callback=url%3Ahttps%3A%2F%2Fapi.example.com%2Ftx");
+  });
+
+  it("handles non-XDR strings safely in getTransactionHashFromXdr without throwing", () => {
+    expect(getTransactionHashFromXdr("not-an-xdr-string")).toBeNull();
+    expect(getTransactionHashFromXdr("")).toBeNull();
   });
 });

@@ -62,6 +62,7 @@ async function allRouterRoutes(): Promise<string[]> {
   const { escrowRouter } = await import("../routes/escrow");
   const { disputesRouter } = await import("../routes/disputes");
   const { reputationRouter } = await import("../routes/reputation");
+  const { webhooksRouter } = await import("../routes/webhooks");
 
   return [
     ...routerRoutes(usersRouter, "/api/users"),
@@ -69,6 +70,7 @@ async function allRouterRoutes(): Promise<string[]> {
     ...routerRoutes(escrowRouter, "/api/escrow"),
     ...routerRoutes(disputesRouter, "/api/disputes"),
     ...routerRoutes(reputationRouter, "/api/reputation"),
+    ...routerRoutes(webhooksRouter, "/api/webhooks"),
   ];
 }
 
@@ -101,8 +103,9 @@ describe("OpenAPI document", () => {
 
     const missing = (await allRouterRoutes()).filter((route) => !documented.has(route));
     expect(missing).toEqual([]);
-    // Plus the liveness probe, which is registered on the app rather than a router.
+    // Plus the liveness and readiness probes, which are registered on the app rather than a router.
     expect(documented.has("GET /health")).toBe(true);
+    expect(documented.has("GET /ready")).toBe(true);
   });
 
   it("derives a request body from the route's Zod schema", async () => {

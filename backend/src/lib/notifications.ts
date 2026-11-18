@@ -41,6 +41,24 @@ export function setEmailProvider(provider: EmailProvider): void {
   activeEmailProvider = provider;
 }
 
+/**
+ * Truncate or mask a 56-character Stellar public address (e.g. `GA3F...7B29` or `GABCD...WXYZ`).
+ * If the string is shorter than or equal to 10 characters, returns it unchanged.
+ */
+export function shortAddress(address: string): string {
+  if (!address || address.length <= 10) return address;
+  return `${address.slice(0, 5)}...${address.slice(-4)}`;
+}
+
+/**
+ * Scan a string and replace any full 56-character Stellar public keys (e.g. `G...`)
+ * with their masked representation (`shortAddress`).
+ */
+export function maskAddresses(text: string): string {
+  if (!text) return text;
+  return text.replace(/\b[GCM][A-Z2-7]{55}\b/g, (match) => shortAddress(match));
+}
+
 export interface NotificationUser {
   id?: string;
   stellarAddress: string;
@@ -70,12 +88,16 @@ export async function notifyDisputeOpened(
     (u): u is NotificationUser => Boolean(u && u.email && u.notifyOnDispute),
   );
 
+  const maskedTitle = maskAddresses(job.title);
+  const maskedReason = details?.reason ? maskAddresses(details.reason) : "";
+
   for (const party of parties) {
     const text = [
       `Hello,`,
       ``,
-      `A dispute has been opened for the job "${job.title}".`,
-      details?.reason ? `Reason: ${details.reason}` : "",
+      `A dispute has been opened for the job "${maskedTitle}".`,
+      maskedReason ? `Reason: ${maskedReason}` : "",
+      details?.disputeId ? `Dispute ID: ${details.disputeId}` : "",
       ``,
       `Please visit the platform to review and take action.`,
     ]
@@ -84,7 +106,7 @@ export async function notifyDisputeOpened(
 
     await provider.sendEmail({
       to: party.email!,
-      subject: `[Notification] Dispute Opened: ${job.title}`,
+      subject: maskAddresses(`[Notification] Dispute Opened: ${job.title}`),
       text,
     });
   }
@@ -103,11 +125,13 @@ export async function notifyMilestoneReleased(
     (u): u is NotificationUser => Boolean(u && u.email && u.notifyOnRelease),
   );
 
+  const maskedTitle = maskAddresses(job.title);
+
   for (const party of parties) {
     const text = [
       `Hello,`,
       ``,
-      `Milestone #${milestone.index + 1} for the job "${job.title}" has been released!`,
+      `Milestone #${milestone.index + 1} for the job "${maskedTitle}" has been released!`,
       milestone.amount ? `Amount: ${milestone.amount}` : "",
       ``,
       `Please visit the platform to review the updated job status.`,
@@ -117,7 +141,7 @@ export async function notifyMilestoneReleased(
 
     await provider.sendEmail({
       to: party.email!,
-      subject: `[Notification] Milestone Released: ${job.title}`,
+      subject: maskAddresses(`[Notification] Milestone Released: ${job.title}`),
       text,
     });
   }
@@ -136,12 +160,15 @@ export async function notifyEscrowRefunded(
     (u): u is NotificationUser => Boolean(u && u.email && u.notifyOnRefund),
   );
 
+  const maskedTitle = maskAddresses(job.title);
+  const maskedDetails = details?.reason ? maskAddresses(details.reason) : "";
+
   for (const party of parties) {
     const text = [
       `Hello,`,
       ``,
-      `The escrow for the job "${job.title}" has been refunded.`,
-      details?.reason ? `Details: ${details.reason}` : "",
+      `The escrow for the job "${maskedTitle}" has been refunded.`,
+      maskedDetails ? `Details: ${maskedDetails}` : "",
       ``,
       `Please visit the platform to review the updated job status.`,
     ]
@@ -150,7 +177,7 @@ export async function notifyEscrowRefunded(
 
     await provider.sendEmail({
       to: party.email!,
-      subject: `[Notification] Escrow Refunded: ${job.title}`,
+      subject: maskAddresses(`[Notification] Escrow Refunded: ${job.title}`),
       text,
     });
   }

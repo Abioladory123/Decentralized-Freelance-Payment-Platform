@@ -18,9 +18,20 @@ const STATUS_CLASS: Record<string, string> = {
   completed: "badge badge-completed",
   disputed: "badge badge-disputed",
   refunded: "badge badge-refunded",
+  verified: "badge badge-verified",
+  "verified grant": "badge badge-verified",
+  "scf funded": "badge badge-verified",
 };
 
-export default function StatusBadge({ status }: { status: string }) {
-  const className = STATUS_CLASS[status.toLowerCase()] ?? "badge badge-unknown";
-  return <span className={className}>{status}</span>;
+export default function StatusBadge({ status, label }: { status: string; label?: string }) {
+  const lower = status.toLowerCase();
+  let className = STATUS_CLASS[lower];
+  if (!className) {
+    if (lower.includes("verified") || lower.includes("scf") || lower.includes("grant")) {
+      className = "badge badge-verified";
+    } else {
+      className = "badge badge-unknown";
+    }
+  }
+  return <span className={className}>{label ?? status}</span>;
 }

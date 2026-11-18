@@ -39,6 +39,8 @@ vi.mock("../lib/stellar", () => ({
   scU64: vi.fn(() => ({})),
   server: { sendTransaction: h.sendTransaction },
   explorerTxUrl: (hash: string) => `https://stellar.expert/explorer/testnet/tx/${hash}`,
+  generateSep0007Uri: vi.fn((xdr: string) => `web+stellar:tx?xdr=${encodeURIComponent(xdr)}`),
+  getTransactionHashFromXdr: vi.fn(() => "mock-tx-hash"),
 }));
 
 vi.mock("@stellar/stellar-sdk", () => ({

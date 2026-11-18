@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import ErrorBoundary from "./ErrorBoundary";
+import * as monitoring from "../lib/monitoring";
 
 /** A child that fails during render, the way a broken page would. */
 function Boom(): never {
@@ -64,5 +65,21 @@ describe("ErrorBoundary (issue #28)", () => {
         value: originalLocation,
       });
     }
+  });
+
+  it("captures unhandled rendering errors with error monitoring (issue #308)", () => {
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    const spy = vi.spyOn(monitoring, "captureFrontendError");
+
+    render(
+      <ErrorBoundary>
+        <Boom />
+      </ErrorBoundary>,
+    );
+
+    expect(spy).toHaveBeenCalledWith(
+      expect.objectContaining({ message: "render exploded" }),
+      expect.objectContaining({ componentStack: expect.any(String) }),
+    );
   });
 });

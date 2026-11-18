@@ -51,11 +51,17 @@ export function ToastProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const update = useCallback(
-    (id: string, status: ToastStatus, message?: string, hash?: string) => {
+    (id: string, status: ToastStatus, message?: string, hash?: string, xdr?: string) => {
       setToasts((prev) =>
         prev.map((toast) =>
           toast.id === id
-            ? { ...toast, status, message: message ?? toast.message, ...(hash ? { hash } : {}) }
+            ? {
+                ...toast,
+                status,
+                message: message ?? toast.message,
+                ...(hash ? { hash } : {}),
+                ...(xdr !== undefined ? { xdr } : {}),
+              }
             : toast,
         ),
       );

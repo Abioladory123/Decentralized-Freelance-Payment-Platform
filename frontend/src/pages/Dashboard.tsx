@@ -430,6 +430,9 @@ export default function Dashboard() {
             return (
               <li key={job.id} style={{ marginBottom: "1rem" }}>
                 <strong>{job.title}</strong> <StatusBadge status={job.status} />
+                {job.isVerified && (
+                  <> <StatusBadge status={job.verificationSource ?? "Verified Grant"} /></>
+                )}
                 {job.tags && job.tags.length > 0 && (
                   <>
                     {" "}

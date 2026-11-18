@@ -160,10 +160,10 @@ jobs:
       - run: npm test
 
   # Build both shipped images here so a Dockerfile change is reviewed in the
-  # same run as its source, and cache every layer in the Actions cache (issue
-  # #289). Without `cache-to: type=gha`, each run rebuilds `npm ci`, the Prisma
-  # client and the Vite bundle from scratch; with it, only the layers whose
-  # inputs changed (usually just the source copy) are rebuilt.
+  # same run as its source, and cache every layer in the Actions cache (issues
+  # #284 and #289). Without `cache-to: type=gha`, each run rebuilds `npm ci`,
+  # the Prisma client and the Vite bundle from scratch; with it, only the layers
+  # whose inputs changed (usually just the source copy) are rebuilt.
   #
   # `scope` keeps the two images' caches separate — they share the node base
   # layer but have different lockfiles and build steps.
@@ -250,3 +250,4 @@ jobs:
         run: |
           cargo install cargo-audit --locked
           cargo audit
+

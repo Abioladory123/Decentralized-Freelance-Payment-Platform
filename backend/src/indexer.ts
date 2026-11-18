@@ -64,11 +64,12 @@ import {
   type ContractEventLike,
 } from "./lib/events";
 import {
-  notifyDisputeOpened,
-  notifyMilestoneReleased,
   notifyEscrowRefunded,
+  maskAddresses,
 } from "./lib/notifications";
 import { invalidateFreelancerDirectory } from "./lib/cache";
+import { dispatchWebhooksForEvent } from "./lib/webhooks";
+import { checkIndexerLagAlert } from "./lib/alerts";
 
 const CURSOR_ID = "main";
 export const EVENT_PAGE_LIMIT = 100;
@@ -170,6 +171,7 @@ export interface IndexerStore {
   user: RatedStores["user"];
   rating: RatedStores["rating"];
   chainEvent?: Pick<PrismaClient["chainEvent"], "upsert">;
+  webhookSubscription?: Pick<PrismaClient["webhookSubscription"], "findMany">;
 }
 
 export function startIndexer() {
@@ -258,6 +260,12 @@ async function poll() {
     };
 
     await processContractEvents(source, cursor, CONTRACT_IDS);
+
+    try {
+      await checkIndexerLagAlert({ rpcServer });
+    } catch (alertErr) {
+      console.error("[indexer] Alert check error:", alertErr);
+    }
   } catch (err) {
     console.error("[indexer] Poll error:", err);
   }
@@ -453,14 +461,22 @@ export function restoreDeadLetterEvent(payload: unknown): ContractEventLike {
     throw new Error("Dead letter event payload is invalid");
   }
 
-  return {
-    ledger: row.ledger as number,
-    topic: row.topic.map((value) => xdr.ScVal.fromXDR(value, "base64")),
-    value: xdr.ScVal.fromXDR(row.value, "base64"),
-    ...(typeof row.id === "string" ? { id: row.id } : {}),
-    ...(typeof row.txHash === "string" ? { txHash: row.txHash } : {}),
-    ...(typeof row.ledgerClosedAt === "string" ? { ledgerClosedAt: row.ledgerClosedAt } : {}),
-  };
+  try {
+    return {
+      ledger: row.ledger as number,
+      topic: row.topic.map((value) => xdr.ScVal.fromXDR(value, "base64")),
+      value: xdr.ScVal.fromXDR(row.value, "base64"),
+      ...(typeof row.id === "string" ? { id: row.id } : {}),
+      ...(typeof row.txHash === "string" ? { txHash: row.txHash } : {}),
+      ...(typeof row.ledgerClosedAt === "string" ? { ledgerClosedAt: row.ledgerClosedAt } : {}),
+    };
+  } catch (err) {
+    throw new Error(
+      `Failed to decode XDR from dead letter event payload: ${
+        err instanceof Error ? err.message : String(err)
+      }`
+    );
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -558,6 +574,14 @@ export async function dispatchEvent(
       // contract-config rotation (audited on-chain via getEvents), and no
       // Job row is affected by it.
       break;
+  }
+
+  // Trigger webhooks for external subscribers (issue #313).
+  // Best-effort: delivery failures must never interrupt the indexer event stream.
+  try {
+    await dispatchWebhooksForEvent(name, data, store);
+  } catch (err) {
+    console.error(`[indexer] failed to dispatch webhooks for event ${name}:`, err);
   }
 }
 
@@ -680,8 +704,8 @@ async function notifyParticipants(
             userId,
             jobId: job.id,
             type,
-            title,
-            message,
+            title: maskAddresses(title),
+            message: maskAddresses(message),
           },
         }),
       ),

@@ -15,10 +15,13 @@
  * before `/:id`, or they would be read as job ids.
  */
 
-import { Router } from "express";
+import { Router, type RequestHandler } from "express";
 import { z } from "zod";
+import { Prisma } from "@prisma/client";
+import { config } from "../config";
 import { prisma } from "../db";
-import { requireAuth } from "../middleware/auth";
+import { withTransactionRetry } from "../lib/transactionRetry";
+import { requireAuth, optionalAuth } from "../middleware/auth";
 import { validate } from "../middleware/validate";
 import { AppError } from "../middleware/errorHandler";
 import {
@@ -37,6 +40,7 @@ import {
   listJobsQuerySchema,
 } from "../lib/schemas";
 import { isSkillTag, SKILL_TAGS, SKILL_TAG_SLUGS } from "../lib/tags";
+import { isListed, parseList } from "../lib/access";
 
 export const jobsRouter = Router();
 
@@ -52,7 +56,7 @@ jobsRouter.get("/", async (req, res, next) => {
     if (!parsed.success) {
       throw new AppError(400, parsed.error.issues.map((i) => i.message).join(", "));
     }
-    const { status, client, freelancer, tag, q, sort, page, limit } = parsed.data;
+    const { status, client, freelancer, tag, q, sort, page, limit, isVerified } = parsed.data;
 
     // A tag the taxonomy does not know is a caller mistake, not "no results" —
     // answering 400 with the accepted slugs keeps a typo from looking like an
@@ -95,6 +99,7 @@ jobsRouter.get("/", async (req, res, next) => {
         ...(freelancer ? { freelancer: { stellarAddress: freelancer } } : {}),
         // Postgres array containment: a job matches when its tags include this one.
         ...(tagFilter ? { tags: { has: tagFilter } } : {}),
+        ...(isVerified !== undefined ? { isVerified } : {}),
         ...searchFilter,
       },
       include: { milestones: true, client: true, freelancer: true },
@@ -265,7 +270,7 @@ jobsRouter.post("/", requireAuth, validate(createJobSchema), async (req, res, ne
 });
 
 // GET /api/jobs/:id
-jobsRouter.get("/:id", async (req, res, next) => {
+jobsRouter.get("/:id", optionalAuth, async (req, res, next) => {
   try {
     const job = await prisma.job.findUnique({
       where: { id: req.params.id },
@@ -289,6 +294,20 @@ jobsRouter.get("/:id", async (req, res, next) => {
       },
     });
     if (!job) throw new AppError(404, "Job not found");
+
+    // Restrict proposal details visibility (issue #309):
+    // 1. Client can view all submitted proposals.
+    // 2. Authenticated freelancer can view only their own proposal.
+    // 3. Unauthenticated visitor or other third parties receive an empty list.
+    const callerAddress = res.locals.stellarAddress;
+    if (!callerAddress) {
+      job.proposals = [];
+    } else if (job.client?.stellarAddress !== callerAddress) {
+      job.proposals = (job.proposals || []).filter(
+        (p) => p.freelancer?.stellarAddress === callerAddress,
+      );
+    }
+
     res.json(job);
   } catch (err) {
     next(err);
@@ -334,8 +353,8 @@ jobsRouter.post("/:id/proposals", requireAuth, validate(createProposalSchema), a
         include: { freelancer: true },
       });
       res.status(201).json(proposal);
-    } catch (e: any) {
-      if (e?.code === "P2002") {
+    } catch (e: unknown) {
+      if ((e as { code?: string })?.code === "P2002") {
         throw new AppError(409, "You have already applied for this job");
       }
       throw e;
@@ -359,40 +378,64 @@ jobsRouter.get("/:id/proposals", async (req, res, next) => {
   }
 });
 
-// PUT /api/jobs/:id/assign
+// PUT /api/jobs/:id/assign — assign freelancer under RepeatableRead isolation (issue #276)
 jobsRouter.put("/:id/assign", requireAuth, validate(assignJobSchema), async (req, res, next) => {
   try {
-    const job = await prisma.job.findUnique({ where: { id: req.params.id }, include: { client: true } });
-    if (!job) throw new AppError(404, "Job not found");
-    if (job.client.stellarAddress !== res.locals.stellarAddress) {
-      throw new AppError(403, "Only the client can assign a freelancer");
-    }
-
-    if (job.freelancerId) {
-      throw new AppError(400, "Job is already assigned to a freelancer");
-    }
-
     const { freelancerAddress } = req.body as z.infer<typeof assignJobSchema>;
-    if (job.client.stellarAddress === freelancerAddress) {
-      throw new AppError(400, "Client cannot be assigned as freelancer to their own job");
-    }
 
-    const freelancer = await prisma.user.findUnique({ where: { stellarAddress: freelancerAddress } });
-    if (!freelancer) throw new AppError(404, "Freelancer not found");
+    const execWithRetry = typeof withTransactionRetry === "function"
+      ? withTransactionRetry
+      : ((fn: () => Promise<unknown>) => fn());
 
-    const updated = await prisma.job.update({
-      where: { id: req.params.id },
-      data: { freelancerId: freelancer.id },
-    });
+    const updated = await execWithRetry(async () => {
+      const runTransaction = typeof prisma.$transaction === "function"
+        ? (fn: (tx: Prisma.TransactionClient) => Promise<unknown>, opts?: { isolationLevel?: Prisma.TransactionIsolationLevel }) =>
+            prisma.$transaction(fn, opts)
+        : (fn: (tx: typeof prisma) => Promise<unknown>) => fn(prisma);
 
-    // Accept selected proposal and reject other pending proposals
-    await prisma.proposal.updateMany({
-      where: { jobId: job.id, freelancerId: freelancer.id },
-      data: { status: "ACCEPTED" },
-    });
-    await prisma.proposal.updateMany({
-      where: { jobId: job.id, freelancerId: { not: freelancer.id }, status: "PENDING" },
-      data: { status: "REJECTED" },
+      return runTransaction(
+        async (tx) => {
+          const job = await tx.job.findUnique({
+            where: { id: req.params.id },
+            include: { client: true },
+          });
+          if (!job) throw new AppError(404, "Job not found");
+          if (job.client.stellarAddress !== res.locals.stellarAddress) {
+            throw new AppError(403, "Only the client can assign a freelancer");
+          }
+
+          if (job.freelancerId) {
+            throw new AppError(400, "Job is already assigned to a freelancer");
+          }
+
+          if (job.client.stellarAddress === freelancerAddress) {
+            throw new AppError(400, "Client cannot be assigned as freelancer to their own job");
+          }
+
+          const freelancer = await tx.user.findUnique({
+            where: { stellarAddress: freelancerAddress },
+          });
+          if (!freelancer) throw new AppError(404, "Freelancer not found");
+
+          const assigned = await tx.job.update({
+            where: { id: req.params.id },
+            data: { freelancerId: freelancer.id },
+          });
+
+          // Accept selected proposal and reject other pending proposals
+          await tx.proposal.updateMany({
+            where: { jobId: job.id, freelancerId: freelancer.id },
+            data: { status: "ACCEPTED" },
+          });
+          await tx.proposal.updateMany({
+            where: { jobId: job.id, freelancerId: { not: freelancer.id }, status: "PENDING" },
+            data: { status: "REJECTED" },
+          });
+
+          return assigned;
+        },
+        { isolationLevel: Prisma.TransactionIsolationLevel.RepeatableRead },
+      );
     });
 
     res.json(updated);
@@ -486,3 +529,55 @@ jobsRouter.get("/:jobId/milestones/:index/deliverables", async (req, res, next) 
     next(err);
   }
 });
+
+export const verifyJobSchema = z.object({
+  isVerified: z.boolean().default(true),
+  verificationSource: z.string().trim().min(1).max(100).nullable().optional(),
+});
+
+const requireAdmin: RequestHandler = (_req, res, next) => {
+  const admins = parseList(config.INDEXER_ADMIN_ADDRESSES);
+  if (admins.length === 0) {
+    return next(new AppError(503, "Administration is unavailable: no admins configured"));
+  }
+  if (!isListed(res.locals.stellarAddress, admins)) {
+    return next(new AppError(403, "Only a configured admin can verify jobs"));
+  }
+  next();
+};
+
+// PATCH /api/jobs/:id/verify (issue #314)
+jobsRouter.patch(
+  "/:id/verify",
+  requireAuth,
+  requireAdmin,
+  validate(verifyJobSchema),
+  async (req, res, next) => {
+    try {
+      const { isVerified, verificationSource } = req.body;
+      const existing = await prisma.job.findUnique({
+        where: { id: req.params.id },
+      });
+      if (!existing) {
+        throw new AppError(404, "Job not found");
+      }
+
+      const updated = await prisma.job.update({
+        where: { id: req.params.id },
+        data: {
+          isVerified,
+          verificationSource: isVerified ? (verificationSource ?? "Stellar Community Fund") : null,
+        },
+        include: {
+          milestones: { orderBy: { index: "asc" } },
+          client: { select: { id: true, stellarAddress: true, displayName: true } },
+          freelancer: { select: { id: true, stellarAddress: true, displayName: true } },
+        },
+      });
+
+      res.json(updated);
+    } catch (err) {
+      next(err);
+    }
+  },
+);

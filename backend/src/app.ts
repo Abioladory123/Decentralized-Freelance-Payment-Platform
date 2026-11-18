@@ -9,6 +9,7 @@ import { prisma } from "./db";
 import { docsEnabled, openApiDocument } from "./openapi";
 import { isAllowedOrigin, parseList } from "./lib/access";
 import { jsonReplacer } from "./lib/json";
+import { sendCachedJson } from "./lib/cache";
 import { errorHandler } from "./middleware/errorHandler";
 import { notFoundHandler } from "./middleware/notFound";
 import { createAuthRateLimiter } from "./middleware/rateLimit";
@@ -19,7 +20,11 @@ import { disputesRouter } from "./routes/disputes";
 import { reputationRouter } from "./routes/reputation";
 import { notificationsRouter } from "./routes/notifications";
 import { milestonesRouter } from "./routes/milestones";
+import { webhooksRouter } from "./routes/webhooks";
 import { adminIndexerRouter } from "./routes/adminIndexer";
+import { tracingMiddleware } from "./lib/tracing";
+import { metricsMiddleware } from "./lib/metrics";
+import { metricsRouter } from "./routes/metrics";
 
 /**
  * Access logging (issue #27).
@@ -39,10 +44,12 @@ export function requestLogger(): RequestHandler {
     const startedAt = process.hrtime.bigint();
     res.on("finish", () => {
       const durationMs = Number(process.hrtime.bigint() - startedAt) / 1e6;
+      const traceId = res.locals?.traceId || (req as unknown as { traceId?: string })?.traceId;
       console.log(
         JSON.stringify({
           level: "info",
           event: "http_request",
+          ...(traceId ? { traceId } : {}),
           method: req.method,
           path: req.originalUrl,
           status: res.statusCode,
@@ -57,6 +64,9 @@ export function requestLogger(): RequestHandler {
 export function createApp() {
   const app = express();
 
+  app.use(tracingMiddleware());
+  app.use(metricsMiddleware());
+
   if (config.TRUST_PROXY > 0) {
     app.set("trust proxy", config.TRUST_PROXY);
   }
@@ -66,7 +76,9 @@ export function createApp() {
   // helmet's default Content-Security-Policy would block. The routes are only
   // registered outside production, so a deployed instance exposes neither.
   if (docsEnabled) {
-    app.get("/api/docs/openapi.json", (_req, res) => res.json(openApiDocument));
+    app.get("/api/docs/openapi.json", (req, res) => {
+      sendCachedJson(req, res, openApiDocument);
+    });
     app.use("/api/docs", swaggerUi.serve, swaggerUi.setup(openApiDocument));
   }
 
@@ -109,32 +121,36 @@ export function createApp() {
   app.use("/api/users/challenge", createAuthRateLimiter(authLimit));
   app.use("/api/users/auth", createAuthRateLimiter(authLimit));
 
-  app.get("/health", async (_req, res) => {
-  const dbOk = await checkDbHealth();
-  const indexerOk = await checkIndexerHealth();
+  const handleHealth = async (_req: express.Request, res: express.Response) => {
+    const dbOk = await checkDbHealth();
+    const indexerOk = await checkIndexerHealth();
 
-  if (!dbOk || !indexerOk) {
-    return res.status(503).json({
-      status: "unhealthy",
-      db: dbOk,
-      indexer: indexerOk,
-    });
-  }
+    if (!dbOk || !indexerOk) {
+      return res.status(503).json({
+        status: "unhealthy",
+        db: dbOk,
+        indexer: indexerOk,
+      });
+    }
 
-  // Also check indexer staleness: if cursor hasn't advanced recently,
-  // return degraded status even if indexer is running
-  const indexerStale = await checkIndexerStaleness();
-  if (indexerStale) {
-    return res.status(200).json({
-      status: "degraded",
-      db: true,
-      indexer: false,
-      message: "Indexer has not advanced recently",
-    });
-  }
+    // Also check indexer staleness: if cursor hasn't advanced recently,
+    // return degraded status even if indexer is running
+    const indexerStale = await checkIndexerStaleness();
+    if (indexerStale) {
+      return res.status(200).json({
+        status: "degraded",
+        db: true,
+        indexer: false,
+        message: "Indexer has not advanced recently",
+      });
+    }
 
-  return res.json({ status: "ok", db: true, indexer: true });
-});
+    return res.json({ status: "ok", db: true, indexer: true });
+  };
+
+  app.get("/health", handleHealth);
+  app.get("/ready", handleHealth);
+  app.use("/metrics", metricsRouter);
 
   app.use("/api/users", usersRouter);
   app.use("/api/jobs", jobsRouter);
@@ -143,6 +159,7 @@ export function createApp() {
   app.use("/api/disputes", disputesRouter);
   app.use("/api/reputation", reputationRouter);
   app.use("/api/notifications", notificationsRouter);
+  app.use("/api/webhooks", webhooksRouter);
   app.use("/api/admin/indexer", adminIndexerRouter);
 
   // Unmatched paths fall through to Express's built-in final handler, which
@@ -175,10 +192,13 @@ async function checkIndexerStaleness(): Promise<boolean> {
   }
 }
 
-/** Check database connectivity with a cheap query */
+/** Check database connectivity with a cheap query and timeout guard */
 async function checkDbHealth(): Promise<boolean> {
   try {
-    await prisma.$queryRaw`SELECT 1`;
+    const timeout = new Promise<never>((_, reject) =>
+      setTimeout(() => reject(new Error("Database health check timed out")), 3000),
+    );
+    await Promise.race([prisma.$queryRaw`SELECT 1`, timeout]);
     return true;
   } catch {
     return false;
