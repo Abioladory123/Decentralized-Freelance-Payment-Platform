@@ -6,7 +6,7 @@
  * collaborators, so the ordering, the drain timeout and the exit code are
  * asserted here without a real server, database or signal.
  */
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { createShutdownHandler, DEFAULT_SHUTDOWN_TIMEOUT_MS } from "../lib/shutdown";
 
 describe("createShutdownHandler", () => {
@@ -112,7 +112,7 @@ describe("createShutdownHandler", () => {
     }
   });
 
-  it("uses a sane default timeout", () => {
-    expect(DEFAULT_SHUTDOWN_TIMEOUT_MS).toBeGreaterThan(0);
+  it("uses a sane default timeout (15s for graceful drain, issue #304)", () => {
+    expect(DEFAULT_SHUTDOWN_TIMEOUT_MS).toBe(15_000);
   });
 });

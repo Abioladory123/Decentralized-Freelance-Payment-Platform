@@ -52,4 +52,14 @@ describe("frontend/Dockerfile", () => {
     expect(dockerfile).toMatch(/VITE_API_URL=\$VITE_API_URL/);
     expect(nginxConf).toMatch(/location\s+\/api\/\s*\{\s*proxy_pass\s+http:\/\/backend:3000;/);
   });
+
+  it("enables gzip compression for static text, code, and svg assets (issue #303)", () => {
+    expect(nginxConf).toMatch(/^\s*gzip\s+on\s*;/m);
+    expect(nginxConf).toMatch(/^\s*gzip_vary\s+on\s*;/m);
+    expect(nginxConf).toMatch(/gzip_types[\s\S]+?text\/plain/);
+    expect(nginxConf).toMatch(/application\/javascript/);
+    expect(nginxConf).toMatch(/text\/css/);
+    expect(nginxConf).toMatch(/application\/json/);
+    expect(nginxConf).toMatch(/image\/svg\+xml/);
+  });
 });

@@ -12,7 +12,7 @@
  */
 
 /** How long to let in-flight work drain before the process is forced out. */
-export const DEFAULT_SHUTDOWN_TIMEOUT_MS = 10_000;
+export const DEFAULT_SHUTDOWN_TIMEOUT_MS = 15_000;
 
 export interface ShutdownDeps {
   /** Stop the indexer's polling loop; resolves once an in-flight poll is done. */
