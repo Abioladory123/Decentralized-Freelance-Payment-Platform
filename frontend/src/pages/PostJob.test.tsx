@@ -71,6 +71,7 @@ afterEach(() => {
   cleanup();
   localStorage.clear();
   vi.unstubAllEnvs();
+  window.history.replaceState({}, "", "/");
 });
 
 describe("PostJob asset picker", () => {
@@ -171,6 +172,53 @@ describe("PostJob skills", () => {
     fireEvent.click(box);
     expect(box.checked).toBe(false);
     expect(screen.getByText(`Skills (0/${MAX_JOB_TAGS})`)).toBeTruthy();
+  });
+});
+
+describe("PostJob freelancer invite link (#80)", () => {
+  // A real 56-character account id (the deploy admin in deployments/testnet.json).
+  const FREELANCER = "GBPLJHDI6RPLS4EEJJTM7EVEV3UNTXLFAACWA63QSTHGLWH5RO3LQ75B";
+
+  it("pre-fills the freelancer address from an invite link", async () => {
+    window.history.replaceState({}, "", `/post?freelancer=${FREELANCER}`);
+
+    await renderWithEnv({});
+
+    const input = screen.getByLabelText(/Freelancer Stellar address/) as HTMLInputElement;
+    expect(input.value).toBe(FREELANCER);
+    expect(screen.getByText(/pre-filled from an invite link/)).toBeTruthy();
+  });
+
+  it("lets the invite link override a stale address in the draft", async () => {
+    // A draft from an earlier visit should not beat the deliberate link.
+    localStorage.setItem(
+      "postjob_draft",
+      JSON.stringify({
+        title: "",
+        description: "",
+        freelancer: "GOLDADDRESS",
+        assetSymbol: "USDC",
+        expiryDays: "30",
+        selectedTags: [],
+        rows: [{ amount: "" }],
+      }),
+    );
+    window.history.replaceState({}, "", `/post?freelancer=${FREELANCER}`);
+
+    await renderWithEnv({});
+
+    const input = screen.getByLabelText(/Freelancer Stellar address/) as HTMLInputElement;
+    expect(input.value).toBe(FREELANCER);
+  });
+
+  it("ignores an invalid address in the link and leaves the field empty", async () => {
+    window.history.replaceState({}, "", "/post?freelancer=not-an-address");
+
+    await renderWithEnv({});
+
+    const input = screen.getByLabelText(/Freelancer Stellar address/) as HTMLInputElement;
+    expect(input.value).toBe("");
+    expect(screen.queryByText(/pre-filled from an invite link/)).toBeNull();
   });
 });
 

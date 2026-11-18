@@ -27,6 +27,7 @@ import { useEscrow, type CreateAndFundResult } from "../hooks/useEscrow";
 import { useWallet } from "../hooks/wallet-context";
 import { ASSETS, formatAmount, getAsset, toBaseUnits } from "../lib/assets";
 import { authenticate, createJob, linkEscrowId } from "../lib/api";
+import { freelancerFromInvite } from "../lib/invite";
 import { MAX_JOB_TAGS, tagsByCategory } from "../lib/tags";
 import { CONTRACT_ADDRESSES, explorerTxUrl } from "../lib/stellar";
 import {
@@ -107,9 +108,16 @@ export default function PostJob() {
 
   const draft = loadDraft();
 
+  // A freelancer invite link (`?freelancer=G...`, issue #80) wins over a stale
+  // draft: opening the link is a deliberate choice, and pre-filling the address
+  // is the whole point of it. An invalid value is ignored by the parser.
+  const invitedFreelancer = freelancerFromInvite(window.location.search);
+
   const [title, setTitle] = useState(draft.title);
   const [description, setDescription] = useState(draft.description);
-  const [freelancer, setFreelancer] = useState(draft.freelancer);
+  const [freelancer, setFreelancer] = useState(
+    invitedFreelancer ?? draft.freelancer,
+  );
   const [assetSymbol, setAssetSymbol] = useState(draft.assetSymbol);
   const [expiryDays, setExpiryDays] = useState(draft.expiryDays);
   const [selectedTags, setSelectedTags] = useState<string[]>(draft.selectedTags);
@@ -458,6 +466,13 @@ export default function PostJob() {
             <code>{asset.contractId || "(not configured)"}</code>.
           </span>
         </p>
+
+        {invitedFreelancer && freelancer === invitedFreelancer && (
+          <p className="alert" role="status">
+            Freelancer address pre-filled from an invite link. You can edit it
+            before creating the job.
+          </p>
+        )}
 
         <p>
           <label htmlFor="post-job-freelancer">
