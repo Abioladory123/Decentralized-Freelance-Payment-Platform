@@ -9,6 +9,7 @@
  * DELETE /api/jobs/:id/save        — remove a bookmark
  * POST /api/jobs                   — create a job (off-chain record; escrow funded separately)
  * GET  /api/jobs/:id               — get single job with milestones
+ * POST /api/jobs/:id/cancel        — client withdraws an unfunded CREATED job
  * PUT  /api/jobs/:id/assign        — client assigns a freelancer
  *
  * Route order matters: the literal paths (`/tags`, `/by-escrow`, `/saved`) are registered
@@ -127,7 +128,10 @@ jobsRouter.get("/", async (req, res, next) => {
 
     const jobs = await prisma.job.findMany({
       where: {
-        ...(status ? { status } : {}),
+        // Cancelled jobs are withdrawn, not open work: hide them from the
+        // default listing (issue #81). They stay reachable by id, and an
+        // explicit `?status=CANCELLED` still lists them for history/audit.
+        ...(status ? { status } : { status: { not: "CANCELLED" as const } }),
         ...(asset ? { asset } : {}),
         ...(client ? { client: { stellarAddress: client } } : {}),
         ...(freelancer ? { freelancer: { stellarAddress: freelancer } } : {}),
@@ -344,6 +348,57 @@ jobsRouter.get("/:id", optionalAuth, async (req, res, next) => {
     }
 
     res.json(job);
+  } catch (err) {
+    next(err);
+  }
+});
+
+// POST /api/jobs/:id/cancel — withdraw an unfunded job (issue #81).
+//
+// Only the client may cancel, and only while the job is still CREATED with no
+// on-chain escrow: once funds exist the refund/resolve paths own the job. A
+// repeat call is a no-op that returns the already-cancelled row, so a retried
+// request settles instead of erroring.
+jobsRouter.post("/:id/cancel", requireAuth, async (req, res, next) => {
+  try {
+    const job = await prisma.job.findUnique({
+      where: { id: req.params.id },
+      include: { client: true },
+    });
+    if (!job) throw new AppError(404, "Job not found");
+
+    if (job.client.stellarAddress !== res.locals.stellarAddress) {
+      throw new AppError(403, "Only the client can cancel this job");
+    }
+
+    // Already withdrawn: return the row rather than a conflict, so a retry
+    // after a dropped response does not look like a failure.
+    if (job.status === "CANCELLED") {
+      res.json(job);
+      return;
+    }
+
+    if (
+      job.status !== "CREATED" ||
+      (job.escrowId !== null && job.escrowId !== undefined)
+    ) {
+      throw new AppError(409, "Only an unfunded CREATED job can be cancelled");
+    }
+
+    const cancelled = await prisma.job.update({
+      where: { id: job.id },
+      data: { status: "CANCELLED" },
+    });
+
+    // The job is gone from the marketplace, so pending applications have
+    // nothing left to compete for. They are rejected rather than left dangling
+    // for a freelancer to wonder about.
+    await prisma.proposal.updateMany({
+      where: { jobId: job.id, status: "PENDING" },
+      data: { status: "REJECTED" },
+    });
+
+    res.json(cancelled);
   } catch (err) {
     next(err);
   }

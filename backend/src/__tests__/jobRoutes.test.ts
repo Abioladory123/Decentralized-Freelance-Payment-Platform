@@ -72,7 +72,12 @@ describe("GET /api/jobs: valid filters", () => {
 
     expect(res.status).toBe(200);
     expect(res.body).toEqual([]);
-    expect(args()).toMatchObject({ where: {}, skip: 0, take: 20 });
+    // Cancelled jobs are not open work, so the default list excludes them (#81).
+    expect(args()).toMatchObject({
+      where: { status: { not: "CANCELLED" } },
+      skip: 0,
+      take: 20,
+    });
   });
 
   it("passes a valid status through as the enum member, not a cast", async () => {
@@ -83,7 +88,15 @@ describe("GET /api/jobs: valid filters", () => {
   });
 
   it("accepts every known status", async () => {
-    const statuses = ["CREATED", "FUNDED", "ACTIVE", "COMPLETED", "DISPUTED", "REFUNDED"];
+    const statuses = [
+      "CREATED",
+      "FUNDED",
+      "ACTIVE",
+      "COMPLETED",
+      "DISPUTED",
+      "REFUNDED",
+      "CANCELLED",
+    ];
 
     for (const status of statuses) {
       h.job.findMany.mockClear();
@@ -104,6 +117,7 @@ describe("GET /api/jobs: valid filters", () => {
     await list("?client=GCLIENT&freelancer=GFREELANCER");
 
     expect(args().where).toEqual({
+      status: { not: "CANCELLED" },
       client: { stellarAddress: "GCLIENT" },
       freelancer: { stellarAddress: "GFREELANCER" },
     });
