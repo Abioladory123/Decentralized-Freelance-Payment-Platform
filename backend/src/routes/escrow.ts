@@ -199,6 +199,120 @@ escrowRouter.post(
   },
 );
 
+// POST /api/escrow/build/milestones-batch (issue #266)
+export const milestoneBatchOperationSchema = z.discriminatedUnion("type", [
+  z.object({
+    type: z.literal("add"),
+    amount: z.number().positive(),
+    description: z.string().max(200).optional(),
+    deadline: z.string().datetime().optional(),
+    index: z.number().int().min(0).optional(),
+  }),
+  z.object({
+    type: z.literal("update"),
+    index: z.number().int().min(0),
+    amount: z.number().positive().optional(),
+    description: z.string().max(200).optional(),
+    deadline: z.string().datetime().optional(),
+  }),
+  z.object({
+    type: z.literal("remove"),
+    index: z.number().int().min(0),
+  }),
+]);
+
+export const milestonesBatchSchema = z.object({
+  escrowId: escrowIdSchema,
+  operations: z.array(milestoneBatchOperationSchema).min(1),
+});
+
+escrowRouter.post(
+  "/build/milestones-batch",
+  requireAuth,
+  validate(milestonesBatchSchema),
+  async (req, res, next) => {
+    try {
+      const { escrowId, operations } = req.body as z.infer<typeof milestonesBatchSchema>;
+      const job = await loadEditableJob(BigInt(escrowId), res.locals.stellarAddress);
+
+      // Disallow updating milestones if deliverables already exist (issue #270)
+      const hasDeliverables = (job.milestones as Array<{ deliverables?: unknown[] }> | undefined)?.some(
+        (m) => Array.isArray(m.deliverables) && m.deliverables.length > 0,
+      );
+      if (hasDeliverables) {
+        throw new AppError(400, "Cannot delete or update milestones with attached deliverables");
+      }
+
+      // Start with the job's current milestone state ordered by index
+      const working = [...job.milestones]
+        .sort((a, b) => a.index - b.index)
+        .map((m) => ({
+          amount: Number(m.amount),
+          description: m.description ?? undefined,
+          deadline: m.deadline ? m.deadline.toISOString() : undefined,
+        }));
+
+      // Apply batch operations sequentially
+      for (const op of operations) {
+        if (op.type === "add") {
+          const item = {
+            amount: op.amount,
+            description: op.description,
+            deadline: op.deadline,
+          };
+          if (op.index !== undefined && op.index >= 0 && op.index <= working.length) {
+            working.splice(op.index, 0, item);
+          } else {
+            working.push(item);
+          }
+        } else if (op.type === "update") {
+          if (op.index < 0 || op.index >= working.length) {
+            throw new AppError(400, `Cannot update milestone at invalid index ${op.index}`);
+          }
+          const curr = working[op.index];
+          working[op.index] = {
+            amount: op.amount !== undefined ? op.amount : curr.amount,
+            description: op.description !== undefined ? op.description : curr.description,
+            deadline: op.deadline !== undefined ? op.deadline : curr.deadline,
+          };
+        } else if (op.type === "remove") {
+          if (op.index < 0 || op.index >= working.length) {
+            throw new AppError(400, `Cannot remove milestone at invalid index ${op.index}`);
+          }
+          working.splice(op.index, 1);
+        }
+      }
+
+      // Constraints: count between 1 and 20, all amounts positive
+      if (working.length < 1 || working.length > 20) {
+        throw new AppError(400, "Milestone count must be between 1 and 20");
+      }
+      if (working.some((m) => !m.amount || m.amount <= 0)) {
+        throw new AppError(400, "All milestone amounts must be positive");
+      }
+
+      const asset = assetForJob(job.asset);
+      const contract = new Contract(config.ESCROW_CONTRACT_ID);
+      const args = buildUpdateMilestonesArgs({
+        escrowId: BigInt(escrowId),
+        milestones: working.map((m) => ({
+          amount: toBaseUnits(m.amount, asset.decimals),
+          deadline: BigInt(m.deadline ? Math.floor(new Date(m.deadline).getTime() / 1000) : 0),
+        })),
+      });
+
+      const xdr = await buildTx(
+        res.locals.stellarAddress,
+        contract.call("update_milestones", ...args),
+      );
+
+      res.json({ xdr, milestones: working });
+    } catch (err) {
+      next(err);
+    }
+  },
+);
+
 // PUT /api/escrow/:escrowId/milestones — record an edit the chain has accepted.
 //
 // The `milestones_updated` event carries only `count` and `total_amount`, so the

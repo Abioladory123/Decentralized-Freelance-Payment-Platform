@@ -1,6 +1,6 @@
-import { describe, it, expect, vi } from "vitest";
+import { describe, it, expect, vi, afterEach } from "vitest";
 import type { Server } from "node:http";
-import { Keypair } from "@stellar/stellar-sdk";
+import { Keypair, SorobanRpc } from "@stellar/stellar-sdk";
 import { isValidStellarAddress } from "../lib/stellarAddress";
 import { createDeliverableSchema, createJobSchema } from "../lib/schemas";
 import { jsonReplacer } from "../lib/json";
@@ -17,15 +17,21 @@ const DEPLOY_ADMIN = "GBPLJHDI6RPLS4EEJJTM7EVEV3UNTXLFAACWA63QSTHGLWH5RO3LQ75B";
 
 // Health endpoint operational checks (issue #93)
 
+afterEach(() => {
+  vi.restoreAllMocks();
+});
+
 describe("GET /health", () => {
-  it("returns 200 with status ok when DB and indexer are healthy", async () => {
+  it("returns 200 with status ok when DB, indexer, and RPC are healthy", async () => {
     const { prisma } = await import("../db");
+    const soroban = await import("../lib/soroban");
+    vi.spyOn(soroban, "checkSorobanRpcHealth").mockResolvedValue(true);
     vi.spyOn(prisma, "$queryRaw").mockResolvedValueOnce([{ "?column?": 1 }]);
     vi.spyOn(prisma.indexerCursor, "findUnique").mockResolvedValue({
       id: "main",
       lastLedger: 100,
       updatedAt: new Date(),
-    } as any);
+    } as unknown as Awaited<ReturnType<typeof prisma.indexerCursor.findUnique>>);
 
     let server!: Server;
     const { createApp } = await import("../app");
@@ -39,15 +45,18 @@ describe("GET /health", () => {
     
     const res = await fetch(`${baseUrl}/health`);
     expect(res.status).toBe(200);
-    const body = (await res.json()) as { status: string; db: boolean; indexer: boolean };
+    const body = (await res.json()) as { status: string; db: boolean; indexer: boolean; rpc: boolean };
     expect(body.status).toBe("ok");
     expect(body.db).toBe(true);
     expect(body.indexer).toBe(true);
+    expect(body.rpc).toBe(true);
     await new Promise<void>((resolve) => server.close(() => resolve()));
   });
 
   it("returns 503 when database is unreachable", async () => {
     const { prisma } = await import("../db");
+    const soroban = await import("../lib/soroban");
+    vi.spyOn(soroban, "checkSorobanRpcHealth").mockResolvedValue(true);
     vi.spyOn(prisma, "$queryRaw").mockRejectedValueOnce(new Error("Connection refused"));
     
     let server!: Server;
@@ -61,6 +70,93 @@ describe("GET /health", () => {
     const baseUrl = `http://127.0.0.1:${address.port}`;
     
     const res = await fetch(`${baseUrl}/health`);
+    expect(res.status).toBe(503);
+    const body = (await res.json()) as { status: string; db: boolean; indexer: boolean };
+    expect(body.status).toBe("unhealthy");
+    expect(body.db).toBe(false);
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+    vi.unstubAllEnvs();
+  });
+
+  it("returns 503 degraded when Soroban RPC is unreachable", async () => {
+    const { prisma } = await import("../db");
+    const soroban = await import("../lib/soroban");
+    vi.spyOn(soroban, "checkSorobanRpcHealth").mockResolvedValue(false);
+    vi.spyOn(prisma, "$queryRaw").mockResolvedValueOnce([{ "?column?": 1 }]);
+    vi.spyOn(prisma.indexerCursor, "findUnique").mockResolvedValue({
+      id: "main",
+      lastLedger: 100,
+      updatedAt: new Date(),
+    } as unknown as Awaited<ReturnType<typeof prisma.indexerCursor.findUnique>>);
+
+    let server!: Server;
+    const { createApp } = await import("../app");
+    const app = createApp();
+    await new Promise<void>((resolve) => {
+      server = app.listen(0, "127.0.0.1", resolve);
+    });
+    const address = server.address();
+    if (address === null || typeof address === "string") throw new Error("no port assigned");
+    const baseUrl = `http://127.0.0.1:${address.port}`;
+    
+    const res = await fetch(`${baseUrl}/health`);
+    expect(res.status).toBe(503);
+    const body = (await res.json()) as { status: string; db: boolean; indexer: boolean; rpc: boolean };
+    expect(body.status).toBe("degraded");
+    expect(body.rpc).toBe(false);
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+  });
+});
+
+describe("GET /ready", () => {
+  it("returns 200 with status ok when DB, indexer, and RPC are healthy", async () => {
+    const { prisma } = await import("../db");
+    const soroban = await import("../lib/soroban");
+    vi.spyOn(soroban, "checkSorobanRpcHealth").mockResolvedValue(true);
+    vi.spyOn(prisma, "$queryRaw").mockResolvedValueOnce([{ "?column?": 1 }]);
+    vi.spyOn(prisma.indexerCursor, "findUnique").mockResolvedValue({
+      id: "main",
+      lastLedger: 100,
+      updatedAt: new Date(),
+    } as unknown as Awaited<ReturnType<typeof prisma.indexerCursor.findUnique>>);
+
+    let server!: Server;
+    const { createApp } = await import("../app");
+    const app = createApp();
+    await new Promise<void>((resolve) => {
+      server = app.listen(0, "127.0.0.1", resolve);
+    });
+    const address = server.address();
+    if (address === null || typeof address === "string") throw new Error("no port assigned");
+    const baseUrl = `http://127.0.0.1:${address.port}`;
+    
+    const res = await fetch(`${baseUrl}/ready`);
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { status: string; db: boolean; indexer: boolean; rpc: boolean };
+    expect(body.status).toBe("ok");
+    expect(body.db).toBe(true);
+    expect(body.indexer).toBe(true);
+    expect(body.rpc).toBe(true);
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+  });
+
+  it("returns 503 when database is unreachable", async () => {
+    const { prisma } = await import("../db");
+    const soroban = await import("../lib/soroban");
+    vi.spyOn(soroban, "checkSorobanRpcHealth").mockResolvedValue(true);
+    vi.spyOn(prisma, "$queryRaw").mockRejectedValueOnce(new Error("Connection refused"));
+    
+    let server!: Server;
+    const { createApp } = await import("../app");
+    const app = createApp();
+    await new Promise<void>((resolve) => {
+      server = app.listen(0, "127.0.0.1", resolve);
+    });
+    const address = server.address();
+    if (address === null || typeof address === "string") throw new Error("no port assigned");
+    const baseUrl = `http://127.0.0.1:${address.port}`;
+    
+    const res = await fetch(`${baseUrl}/ready`);
     expect(res.status).toBe(503);
     const body = (await res.json()) as { status: string; db: boolean; indexer: boolean };
     expect(body.status).toBe("unhealthy");
@@ -70,56 +166,23 @@ describe("GET /health", () => {
   });
 });
 
-describe("GET /ready", () => {
-  it("returns 200 with status ok when DB and indexer are healthy", async () => {
-    const { prisma } = await import("../db");
-    vi.spyOn(prisma, "$queryRaw").mockResolvedValueOnce([{ "?column?": 1 }]);
-    vi.spyOn(prisma.indexerCursor, "findUnique").mockResolvedValue({
-      id: "main",
-      lastLedger: 100,
-      updatedAt: new Date(),
-    } as any);
-
-    let server!: Server;
-    const { createApp } = await import("../app");
-    const app = createApp();
-    await new Promise<void>((resolve) => {
-      server = app.listen(0, "127.0.0.1", resolve);
-    });
-    const address = server.address();
-    if (address === null || typeof address === "string") throw new Error("no port assigned");
-    const baseUrl = `http://127.0.0.1:${address.port}`;
-    
-    const res = await fetch(`${baseUrl}/ready`);
-    expect(res.status).toBe(200);
-    const body = (await res.json()) as { status: string; db: boolean; indexer: boolean };
-    expect(body.status).toBe("ok");
-    expect(body.db).toBe(true);
-    expect(body.indexer).toBe(true);
-    await new Promise<void>((resolve) => server.close(() => resolve()));
+describe("checkSorobanRpcHealth", () => {
+  it("returns true when getLatestLedger succeeds", async () => {
+    const { checkSorobanRpcHealth } = await import("../lib/soroban");
+    const mockServer = {
+      getLatestLedger: vi.fn().mockResolvedValue({ id: "ledger-1", sequence: 1000 }),
+    } as unknown as SorobanRpc.Server;
+    const ok = await checkSorobanRpcHealth(mockServer);
+    expect(ok).toBe(true);
   });
 
-  it("returns 503 when database is unreachable", async () => {
-    const { prisma } = await import("../db");
-    vi.spyOn(prisma, "$queryRaw").mockRejectedValueOnce(new Error("Connection refused"));
-    
-    let server!: Server;
-    const { createApp } = await import("../app");
-    const app = createApp();
-    await new Promise<void>((resolve) => {
-      server = app.listen(0, "127.0.0.1", resolve);
-    });
-    const address = server.address();
-    if (address === null || typeof address === "string") throw new Error("no port assigned");
-    const baseUrl = `http://127.0.0.1:${address.port}`;
-    
-    const res = await fetch(`${baseUrl}/ready`);
-    expect(res.status).toBe(503);
-    const body = (await res.json()) as { status: string; db: boolean; indexer: boolean };
-    expect(body.status).toBe("unhealthy");
-    expect(body.db).toBe(false);
-    await new Promise<void>((resolve) => server.close(() => resolve()));
-    vi.unstubAllEnvs();
+  it("returns false when getLatestLedger rejects", async () => {
+    const { checkSorobanRpcHealth } = await import("../lib/soroban");
+    const mockServer = {
+      getLatestLedger: vi.fn().mockRejectedValue(new Error("RPC node down")),
+    } as unknown as SorobanRpc.Server;
+    const ok = await checkSorobanRpcHealth(mockServer);
+    expect(ok).toBe(false);
   });
 });
 
@@ -339,7 +402,7 @@ describe("HTTP cache headers (issue #294)", () => {
       ],
       client: { stellarAddress: USDC_ISSUER, displayName: "Client" },
       freelancer: { stellarAddress: DEPLOY_ADMIN, displayName: "Freelancer" },
-    } as any);
+    } as unknown as Awaited<ReturnType<typeof prisma.job.findUnique>>);
     vi.spyOn(prisma.chainEvent, "findMany").mockResolvedValue([
       {
         id: "evt-1",
@@ -350,7 +413,7 @@ describe("HTTP cache headers (issue #294)", () => {
         ledger: 100,
         createdAt: new Date("2026-01-01T01:00:00Z"),
       },
-    ] as any);
+    ] as unknown as Awaited<ReturnType<typeof prisma.chainEvent.findMany>>);
 
     let server!: Server;
     const { createApp } = await import("../app");
@@ -383,7 +446,7 @@ describe("HTTP cache headers (issue #294)", () => {
       headers: { "If-None-Match": '"mismatched-etag"' },
     });
     expect(mismatchRes.status).toBe(200);
-    const body = (await mismatchRes.json()) as any;
+    const body = (await mismatchRes.json()) as { escrowId: string };
     expect(body.escrowId).toBe("1");
 
     await new Promise<void>((resolve) => server.close(() => resolve()));

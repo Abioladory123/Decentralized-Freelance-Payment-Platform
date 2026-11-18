@@ -10,6 +10,7 @@ import { docsEnabled, openApiDocument } from "./openapi";
 import { isAllowedOrigin, parseList } from "./lib/access";
 import { jsonReplacer } from "./lib/json";
 import { sendCachedJson } from "./lib/cache";
+import { checkSorobanRpcHealth } from "./lib/soroban";
 import { errorHandler } from "./middleware/errorHandler";
 import { notFoundHandler } from "./middleware/notFound";
 import { createAuthRateLimiter } from "./middleware/rateLimit";
@@ -124,12 +125,23 @@ export function createApp() {
   const handleHealth = async (_req: express.Request, res: express.Response) => {
     const dbOk = await checkDbHealth();
     const indexerOk = await checkIndexerHealth();
+    const rpcOk = await checkSorobanRpcHealth();
 
     if (!dbOk || !indexerOk) {
       return res.status(503).json({
         status: "unhealthy",
         db: dbOk,
         indexer: indexerOk,
+        rpc: rpcOk,
+      });
+    }
+
+    if (!rpcOk) {
+      return res.status(503).json({
+        status: "degraded",
+        db: dbOk,
+        indexer: indexerOk,
+        rpc: false,
       });
     }
 
@@ -141,11 +153,12 @@ export function createApp() {
         status: "degraded",
         db: true,
         indexer: false,
+        rpc: true,
         message: "Indexer has not advanced recently",
       });
     }
 
-    return res.json({ status: "ok", db: true, indexer: true });
+    return res.json({ status: "ok", db: true, indexer: true, rpc: true });
   };
 
   app.get("/health", handleHealth);

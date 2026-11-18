@@ -30,6 +30,7 @@ import { prisma } from "../db";
 import { config } from "../config";
 import { requireAuth } from "../middleware/auth";
 import { validate } from "../middleware/validate";
+import { idempotency } from "../middleware/idempotency";
 import { AppError } from "../middleware/errorHandler";
 import { consumeNonce, issueNonce, type AuthNonceStore } from "../lib/authNonce";
 import { verifySignedMessage } from "../lib/signature";
@@ -72,7 +73,8 @@ export const authSchema = z.object({
   nonce: z.string(),
 });
 
-usersRouter.post("/auth", validate(authSchema), async (req, res, next) => {
+// POST /api/users/auth (idempotent, issue #267)
+usersRouter.post("/auth", idempotency(), validate(authSchema), async (req, res, next) => {
   try {
     const { address, signature, nonce } = req.body as z.infer<typeof authSchema>;
 

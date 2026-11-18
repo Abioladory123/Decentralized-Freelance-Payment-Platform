@@ -40,6 +40,7 @@ import {
   releaseSchema,
   syncSchema as escrowSyncSchema,
   updateMilestonesSchema,
+  milestonesBatchSchema,
 } from "./routes/escrow";
 import {
   raiseSchema,
@@ -762,6 +763,25 @@ registry.registerPath({
   security: auth,
   request: { body: { content: { "application/json": { schema: updateMilestonesSchema } } } },
   responses: { 200: json(unsignedTransaction, "Unsigned transaction"), 400: errors[400], 401: errors[401], 403: errors[403], 404: errors[404] },
+});
+
+registry.registerPath({
+  method: "post",
+  path: "/api/escrow/build/milestones-batch",
+  tags: ["Escrow"],
+  summary: "Build batch milestone update transaction (client, before funding, issue #266)",
+  security: auth,
+  request: { body: { content: { "application/json": { schema: milestonesBatchSchema } } } },
+  responses: {
+    200: json(
+      z.object({ xdr: z.string(), milestones: z.array(z.record(z.unknown())) }),
+      "Unsigned transaction with resulting milestones",
+    ),
+    400: errors[400],
+    401: errors[401],
+    403: errors[403],
+    404: errors[404],
+  },
 });
 
 registry.registerPath({

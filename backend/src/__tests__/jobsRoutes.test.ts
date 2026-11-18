@@ -378,3 +378,43 @@ describe("GET /api/jobs/:id: pending disputes", () => {
     expect(res.body.disputes[0].onChainId).toBe("7");
   });
 });
+
+describe("GET /api/jobs filtering and sorting (issue #265)", () => {
+  it("filters jobs by payment asset (e.g. USDC)", async () => {
+    await get("/?asset=USDC");
+
+    expect(h.job.findMany).toHaveBeenCalledTimes(1);
+    expect(h.job.findMany.mock.calls[0][0].where).toMatchObject({
+      asset: "USDC",
+    });
+  });
+
+  it("filters jobs by date range (createdAfter and createdBefore)", async () => {
+    const after = "2026-01-01T00:00:00.000Z";
+    const before = "2026-12-31T23:59:59.999Z";
+    await get(`/?createdAfter=${encodeURIComponent(after)}&createdBefore=${encodeURIComponent(before)}`);
+
+    expect(h.job.findMany).toHaveBeenCalledTimes(1);
+    expect(h.job.findMany.mock.calls[0][0].where.createdAt).toEqual({
+      gte: new Date(after),
+      lte: new Date(before),
+    });
+  });
+
+  it("sorts jobs by custom field and order (sortBy=totalAmount, sortOrder=asc)", async () => {
+    await get("/?sortBy=totalAmount&sortOrder=asc");
+
+    expect(h.job.findMany).toHaveBeenCalledTimes(1);
+    expect(h.job.findMany.mock.calls[0][0].orderBy).toEqual({
+      totalAmount: "asc",
+    });
+  });
+
+  it("rejects invalid date parameters with 400 Bad Request", async () => {
+    const res = await get("/?createdAfter=not-a-valid-date");
+
+    expect(res.status).toBe(400);
+    expect(String(res.body.error)).toMatch(/date/i);
+    expect(h.job.findMany).not.toHaveBeenCalled();
+  });
+});
