@@ -107,6 +107,65 @@ Authorization is checked with `Address::require_auth()` inside the contract:
 functions and `open_dispute` require the party named in the call. `resolve`
 requires the registered dispute contract's address, not a user.
 
+#### 2.1.1 Partial release (`release_partial`) & `released_amount` tracking
+
+The escrow contract supports incremental milestone funding and releases via `release_partial(escrow_id, milestone_index, amount)` alongside full milestone releases (`release_milestone`).
+
+- **Accounting Invariants:**
+  - Every milestone maintains `released_amount <= amount`.
+  - The outstanding payable balance on a milestone is `remaining = amount - released_amount`.
+  - An invocation must satisfy `0 < amount <= remaining`. Over-releasing or paying zero is rejected (`AmountExceedsMilestone` / `ZeroAmount`).
+- **State Transitions:**
+  - While `released_amount + amount < milestone.amount`, the milestone stays unreleased (`released = false`) and the escrow stays `Active`.
+  - When `released_amount + amount == milestone.amount`, the contract marks the milestone `released = true`.
+  - When all milestones in the escrow satisfy `milestone.released == true`, the escrow automatically transitions to `Completed`.
+  - The token transfer (`token::Client::transfer`) immediately pays `amount` to the freelancer.
+  - The contract publishes `MilestoneReleased { escrow_id, index, amount }`, reporting the delta amount paid in this specific call.
+
+```mermaid
+sequenceDiagram
+    autonumber
+    actor Client
+    participant Frontend as Frontend (Freighter)
+    participant Escrow as Escrow Contract
+    participant Token as Token SAC
+    actor Freelancer
+    participant Indexer as Backend Indexer
+    participant DB as PostgreSQL
+
+    Client->>Frontend: Request partial milestone release (escrow_id, index, amount)
+    Frontend->>Frontend: Simulate and sign transaction
+    Frontend->>Escrow: release_partial(escrow_id, index, amount)
+    activate Escrow
+    Escrow->>Escrow: require_auth(client)
+    Escrow->>Escrow: Verify status == Active, index in range, 0 < amount <= (amount - released_amount)
+    Escrow->>Escrow: released_amount += amount
+    alt released_amount == amount
+        Escrow->>Escrow: milestone.released = true
+        opt all milestones released
+            Escrow->>Escrow: escrow.status = Completed
+        end
+    end
+    Escrow->>Token: transfer(contract, freelancer, amount)
+    Token-->>Freelancer: Funds delivered
+    Escrow-->>Escrow: emit MilestoneReleased(escrow_id, index, amount)
+    deactivate Escrow
+    Escrow-->>Frontend: Tx confirmed on-chain
+
+    Note over Indexer,DB: Off-chain Indexer State Reconciliation
+    Indexer->>Escrow: Poll contract events (Soroban RPC)
+    Indexer->>DB: Fetch Job & Milestones by escrow_id
+    Indexer->>DB: Add event.amount (in base units) to Milestone.releasedAmount
+    alt releasedAmount >= total
+        Indexer->>DB: Set Milestone status = RELEASED, releasedAmount = total
+        opt all job milestones released
+            Indexer->>DB: Set Job status = COMPLETED
+        end
+    else Partial progress
+        Indexer->>DB: Update Milestone.releasedAmount
+    end
+```
+
 ### 2.2 `dispute` — the arbitrator panel
 
 `dispute.init(admin, arbitrators, threshold)` is one-shot and requires the
@@ -148,6 +207,63 @@ unreleased balance. The escrow admin controls the positive timeout for future
 disputes with `set_dispute_timeout` (default: 7 days). See
 [`DISPUTES.md`](./DISPUTES.md) for the operational
 flow.
+
+#### 2.2.1 Multi-arbitrator threshold voting workflow
+
+Disputes use an M-of-N threshold scheme across an authenticated arbitrator panel:
+
+```mermaid
+sequenceDiagram
+    autonumber
+    actor Initiator as Initiator (Client / Freelancer)
+    participant Escrow as Escrow Contract
+    participant Dispute as Dispute Contract
+    actor Arbitrator1 as Arbitrator 1
+    actor Arbitrator2 as Arbitrator 2
+    participant Token as Token SAC
+    participant Indexer as Backend Indexer
+    participant DB as PostgreSQL
+
+    Initiator->>Escrow: open_dispute(escrow_id, initiator)
+    Escrow->>Escrow: require_auth(initiator)
+    Escrow->>Escrow: Freeze escrow (status: Active -> Disputed), set dispute_deadline
+    Escrow-->>Escrow: emit dispute_opened(escrow_id, initiator)
+
+    Initiator->>Dispute: raise(escrow_id, escrow_contract, raised_by, reason)
+    Dispute->>Escrow: get(escrow_id)
+    Dispute->>Dispute: Verify status == Disputed & raised_by is party
+    Dispute-->>Dispute: emit raised(dispute_id, escrow_id, raised_by)
+
+    Note over Arbitrator1,Arbitrator2: M-of-N Panel Approvals Bound to Specific Split
+    Arbitrator1->>Dispute: approve(dispute_id, arb1, client_share, freelancer_share)
+    Dispute->>Dispute: require_auth(arb1) & verify arb1 in panel
+    Dispute->>Dispute: Record Approval(dispute_id, panel_version, arb1) = (client_share, freelancer_share)
+    Dispute-->>Dispute: emit approved(dispute_id, arb1, client_share, freelancer_share)
+
+    Arbitrator2->>Dispute: approve(dispute_id, arb2, client_share, freelancer_share)
+    Dispute->>Dispute: require_auth(arb2) & verify arb2 in panel
+    Dispute->>Dispute: Record Approval(dispute_id, panel_version, arb2) = (client_share, freelancer_share)
+    Dispute-->>Dispute: emit approved(dispute_id, arb2, client_share, freelancer_share)
+
+    Note over Dispute,Token: Execution Once Matching Approvals >= Threshold
+    AnyCaller->>Dispute: arbitrate(dispute_id, client_share, freelancer_share)
+    Dispute->>Dispute: Count matching votes for (client_share, freelancer_share) >= threshold
+    Dispute->>Escrow: cross-call resolve(escrow_id, client_share, freelancer_share)
+    activate Escrow
+    Escrow->>Escrow: Verify caller == registered dispute contract
+    Escrow->>Escrow: Verify status == Disputed & (client_share + freelancer_share == unreleased_balance)
+    Escrow->>Escrow: Mark all milestones released, status: Disputed -> Completed
+    Escrow->>Token: transfer(contract, client, client_share)
+    Escrow->>Token: transfer(contract, freelancer, freelancer_share)
+    Escrow-->>Escrow: emit resolved(escrow_id, client_share, freelancer_share)
+    deactivate Escrow
+    Dispute-->>Dispute: emit dispute_resolved(dispute_id, client_share, freelancer_share)
+
+    Note over Indexer,DB: Off-chain Mirroring
+    Indexer->>DB: Reconcile resolved/dispute_resolved events
+    Indexer->>DB: Job status -> COMPLETED, Dispute status -> RESOLVED
+    Indexer->>DB: Set every milestone status = RELEASED, releasedAmount = total
+```
 
 ### 2.3 `reputation` — ratings
 
@@ -239,6 +355,23 @@ The indexer is deliberately conservative:
 - `dispute_opened` does **not** create a `Dispute` row. The on-chain dispute has
   no id or reason until `raise`, so a job can be `DISPUTED` with an empty
   `disputes[]` between the two transactions — by design.
+
+#### 4.2.1 Off-chain indexer state reconciliation for partial releases
+
+In `backend/src/indexer.ts` (`handleMilestoneReleased`), reconciling `milestone_released` events requires careful decimal handling and accumulation:
+
+1. **Delta Event Amount:**
+   `milestone_released` carries `amount` representing the amount paid in *this single transaction*, not the milestone's aggregate. A full release after earlier partial releases emits only the *remainder*.
+2. **Exact Base-Unit Arithmetic:**
+   Event amounts arrive as `i128` integer base units (e.g., stroops with 7 decimal places for XLM/USDC). In the PostgreSQL database, milestone amounts are stored as decimal strings in human units (e.g. `"100.5"`). To prevent precision loss and floating-point rounding errors:
+   - Milestone `amount` and existing `releasedAmount` are converted to integer base units with `toBaseUnits(..., decimals)`.
+   - The event's delta `amount` (`BigInt`) is added: `releasedSoFar = existingReleasedBaseUnits + eventAmount`.
+3. **Milestone Completion & Clamping:**
+   - If `releasedSoFar >= milestoneTotalBaseUnits`, the milestone is fully paid: status is updated to `RELEASED`, `releasedAt` is stamped, and `releasedAmount` is clamped to the milestone total (`formatAmount(milestoneTotal, decimals)`). Clamping ensures that any stray or duplicate event cannot push the stored amount past the total.
+   - Otherwise, the milestone status remains unchanged (e.g. `PENDING`), and `releasedAmount` is updated with `formatAmount(releasedSoFar, decimals)`.
+4. **Job Completion Invariant:**
+   - When a milestone flips to `RELEASED`, the indexer checks whether all milestones belonging to the job are now `RELEASED`.
+   - Only when every milestone is released does the job transition to `COMPLETED`.
 
 ### 4.3 Serve metadata and projections
 

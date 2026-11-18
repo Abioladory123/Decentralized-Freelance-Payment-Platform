@@ -16,12 +16,14 @@
 import { lazy, Suspense } from "react";
 import { BrowserRouter, Link, Route, Routes } from "react-router-dom";
 import { WalletProvider } from "./hooks/WalletProvider";
+import { ToastProvider } from "./hooks/ToastProvider";
 import { useWallet } from "./hooks/wallet-context";
 import { ACTIVE_NETWORK } from "./lib/stellar";
 import AddressField from "./components/AddressField";
 import NotificationsBell from "./components/NotificationsBell";
 import Logo from "./components/Logo";
 import JobDetailSkeleton from "./components/JobDetailSkeleton";
+import Toaster from "./components/Toaster";
 
 // Dynamic route code splitting (issue #293)
 const Dashboard = lazy(() => import("./pages/Dashboard"));
@@ -52,7 +54,7 @@ function Nav() {
           </>
         ) : (
           <button onClick={() => void connect()} disabled={connecting}>
-            {connecting ? "Connecting…" : "Connect Freighter"}
+            {connecting ? "Connecting…" : "Connect Wallet"}
           </button>
         )}
       </span>
@@ -79,7 +81,7 @@ function NetworkMismatchBanner() {
         textAlign: "center",
       }}
     >
-      Freighter is connected to a different network. Please switch to {networkName} in your wallet.
+      Your wallet is connected to a different network. Please switch to {networkName} in your wallet.
     </div>
   );
 }
@@ -87,27 +89,30 @@ function NetworkMismatchBanner() {
 export default function App() {
   return (
     <WalletProvider>
-      <BrowserRouter>
-        <a href="#main-content" className="skip-link">
-          Skip to main content
-        </a>
-        <Nav />
-        <NetworkMismatchBanner />
-        <Suspense fallback={<JobDetailSkeleton />}>
-          <Routes>
-            <Route path="/" element={<Dashboard />} />
-            <Route path="/freelancers" element={<FreelancerDirectory />} />
-            <Route path="/post" element={<PostJob />} />
-            <Route path="/activity" element={<Activity />} />
-            <Route path="/jobs/:id" element={<JobDetail />} />
-            <Route path="/jobs/:id/receipt" element={<Receipt />} />
-            <Route path="/profile/:address" element={<Profile />} />
-            {/* Last route: React Router picks the most specific match, so this
-                only renders when nothing above matched (issue #29). */}
-            <Route path="*" element={<NotFound />} />
-          </Routes>
-        </Suspense>
-      </BrowserRouter>
+      <ToastProvider>
+        <BrowserRouter>
+          <a href="#main-content" className="skip-link">
+            Skip to main content
+          </a>
+          <Nav />
+          <NetworkMismatchBanner />
+          <Suspense fallback={<JobDetailSkeleton />}>
+            <Routes>
+              <Route path="/" element={<Dashboard />} />
+              <Route path="/freelancers" element={<FreelancerDirectory />} />
+              <Route path="/post" element={<PostJob />} />
+              <Route path="/activity" element={<Activity />} />
+              <Route path="/jobs/:id" element={<JobDetail />} />
+              <Route path="/jobs/:id/receipt" element={<Receipt />} />
+              <Route path="/profile/:address" element={<Profile />} />
+              {/* Last route: React Router picks the most specific match, so this
+                  only renders when nothing above matched (issue #29). */}
+              <Route path="*" element={<NotFound />} />
+            </Routes>
+          </Suspense>
+          <Toaster />
+        </BrowserRouter>
+      </ToastProvider>
     </WalletProvider>
   );
 }

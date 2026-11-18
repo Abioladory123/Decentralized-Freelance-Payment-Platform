@@ -142,7 +142,7 @@ describe("Conversation", () => {
 
     render(<Conversation jobId="job-1" />);
 
-    expect(screen.getByRole("button", { name: "Connect Freighter" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Connect a wallet" })).toBeTruthy();
     expect(h.fetchMessages).not.toHaveBeenCalled();
   });
 });

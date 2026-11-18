@@ -16,6 +16,7 @@ import { isValidStellarAddress } from "../lib/stellarAddress";
 import { REPUTATION_ERROR_MESSAGES } from "../lib/contractErrors";
 import { buildTx } from "../lib/soroban";
 import { computeWeightedAggregate } from "../lib/reputation";
+import { invalidateFreelancerDirectory } from "../lib/cache";
 import { prisma } from "../db";
 import { requireAuth } from "../middleware/auth";
 import { validate } from "../middleware/validate";
@@ -105,11 +106,19 @@ reputationRouter.post("/", requireAuth, validate(submitSchema), async (req, res,
       // A concurrent duplicate-submit can still hit the unique constraint after
       // the `findUnique` guard above (race condition). Map it to 409 rather than
       // letting it bubble as a 500.
-      if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === "P2002") {
+      if (
+        (err instanceof Prisma.PrismaClientKnownRequestError && err.code === "P2002") ||
+        (err && typeof err === "object" && (err as { code?: string }).code === "P2002")
+      ) {
         throw new AppError(409, "You have already rated this job.");
       }
       throw err;
     }
+
+    // The directory sorts and displays on the rating rows, so its cached pages
+    // are stale the moment this one is written. The indexer's `rated` event
+    // invalidates them too, but that arrives after the transaction lands.
+    invalidateFreelancerDirectory();
 
     res.status(201).json({ rating, xdr });
   } catch (err) {

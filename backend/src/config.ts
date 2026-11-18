@@ -43,16 +43,20 @@ const schema = z.object({
   INDEXER_LAG_ALERT_THRESHOLD: z.coerce.number().int().positive().default(1000),
   // Maximum unhandled dead-letter rows before alerting.
   DEAD_LETTER_ALERT_THRESHOLD: z.coerce.number().int().positive().default(10),
-  // Dead letter background retry settings (issue #245)
-  DEAD_LETTER_RETRY_INTERVAL_MS: z.coerce.number().int().positive().default(300_000),
-  DEAD_LETTER_MAX_ATTEMPTS: z.coerce.number().int().positive().default(5),
-  // SMTP Email Provider settings (issue #247)
-  SMTP_HOST: z.string().default(""),
-  SMTP_PORT: z.coerce.number().int().positive().default(587),
-  SMTP_USER: z.string().default(""),
-  SMTP_PASS: z.string().default(""),
-  SMTP_FROM: z.string().default(""),
-  SMTP_SECURE: z.enum(["true", "false"]).optional(),
+  // Optional HTTP auth for the Prometheus /metrics endpoint (issue #305).
+  // Unset means the endpoint is open; the route is normally not public.
+  METRICS_USER: z.string().optional(),
+  METRICS_PASSWORD: z.string().optional(),
+  METRICS_TOKEN: z.string().optional(),
+  // Prisma connection pool settings (issue #275).
+  // DATABASE_POOL_SIZE controls connection_limit (default: 10 in containerized/production setups).
+  // DATABASE_TIMEOUT_MS controls query statement_timeout in ms and pool_timeout (default: 10_000).
+  DATABASE_POOL_SIZE: z.coerce.number().int().positive().default(10),
+  DATABASE_TIMEOUT_MS: z.coerce.number().int().positive().default(10_000),
+  // Prometheus metrics auth (issue #305).
+  METRICS_USER: z.string().default(""),
+  METRICS_PASSWORD: z.string().default(""),
+  METRICS_TOKEN: z.string().default(""),
 });
 
 const parsed = schema.safeParse(process.env);

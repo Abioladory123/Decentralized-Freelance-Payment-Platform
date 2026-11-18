@@ -4,48 +4,30 @@
  * Wallet context object + hook, kept separate from the provider component so
  * Fast Refresh works when editing the provider.
  *
- * Freighter injects an API object into the page. Depending on the version this
- * is either `window.freighterApi` (current) or `window.freighter` (legacy); we
- * support both so the app works without pinning a specific extension build.
+ * The provider can connect any adapter registered in `lib/wallets.ts` (Freighter
+ * and LOBSTR today); the context exposes the selected wallet and routes signing
+ * through it, so pages never talk to a specific provider API.
  *
- * No private keys ever touch this code; Freighter signs in its own context.
+ * No private keys ever touch this code; the wallet signs in its own context.
  */
 
 import { createContext, useContext } from "react";
-
-export interface FreighterApi {
-  getPublicKey(): Promise<string>;
-  signTransaction(
-    xdr: string,
-    opts?: { networkPassphrase?: string; address?: string },
-  ): Promise<string>;
-  /** SEP-53 message signing. Newer versions return an object, older a string. */
-  signMessage?(
-    message: string,
-    opts?: { address?: string },
-  ): Promise<{ signature: string } | string>;
-  /** Get the network details from Freighter */
-  getNetwork?(): Promise<{ network: string; networkPassphrase: string }>;
-}
-
-declare global {
-  interface Window {
-    freighter?: FreighterApi;
-    freighterApi?: FreighterApi;
-  }
-}
-
-export function freighter(): FreighterApi | undefined {
-  if (typeof window === "undefined") return undefined;
-  return window.freighterApi ?? window.freighter;
-}
+import type { WalletId } from "../lib/wallets";
 
 export interface WalletContextValue {
   publicKey: string | null;
   connecting: boolean;
   error: string | null;
+  /** True when the connected wallet is on a different network than the app. */
   networkMismatch: boolean;
-  connect: () => Promise<string | null>;
+  /** Adapter behind the current connection, or `null` when disconnected. */
+  walletId: WalletId | null;
+  /**
+   * Connect a wallet. With an id, connect that wallet directly; without one,
+   * open the wallet picker and resolve with the chosen wallet's public key
+   * (`null` if the user cancels).
+   */
+  connect: (walletId?: WalletId) => Promise<string | null>;
   disconnect: () => void;
   sign: (xdr: string) => Promise<string>;
   /** Sign a message per SEP-53; returns the base64 signature. */

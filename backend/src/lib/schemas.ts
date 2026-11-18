@@ -89,13 +89,23 @@ export const listJobsQuerySchema = z.object({
   freelancer: z.string().optional(),
   tag: z.string().optional(),
   isVerified: z.preprocess((val) => (val === "true" ? true : val === "false" ? false : val), z.boolean()).optional(),
+  /** Filter by payment asset, e.g. XLM or USDC (issue #265) */
+  asset: z.string().trim().min(1).max(20).optional(),
+  /** Date range filters (issue #265) */
+  createdAfter: z.string().trim().min(1).optional(),
+  createdBefore: z.string().trim().min(1).optional(),
   /** Keyword search across title + description (issue #62). */
   q: z.string().trim().min(1).max(200).optional(),
   /** Ordering; the default is newest-first (issue #62). */
   sort: z.enum(["newest", "oldest", "amount_desc", "amount_asc"]).optional(),
+  /** Field-based sorting (issue #265) */
+  sortBy: z.enum(["createdAt", "totalAmount", "title", "updatedAt"]).optional(),
+  sortOrder: z.enum(["asc", "desc"]).optional(),
   page: z.coerce.number().int().positive().default(1),
   limit: z.coerce.number().int().positive().max(MAX_PAGE_SIZE).default(DEFAULT_PAGE_SIZE),
 });
+
+export const jobsQuerySchema = listJobsQuerySchema;
 
 export const transactionHistoryQuerySchema = z.object({
   page: z.coerce.number().int().positive().default(1),

@@ -127,7 +127,7 @@ describe("Dashboard wallet state", () => {
   it("asks an unconnected visitor to connect", async () => {
     render(<Dashboard />);
 
-    fireEvent.click(screen.getByRole("button", { name: "Connect your Freighter wallet" }));
+    fireEvent.click(screen.getByRole("button", { name: "Connect your wallet" }));
 
     await waitFor(() => expect(h.wallet.connect).toHaveBeenCalled());
   });
@@ -136,7 +136,7 @@ describe("Dashboard wallet state", () => {
     h.wallet.publicKey = CLIENT;
     render(<Dashboard />);
 
-    expect(screen.queryByRole("button", { name: /Connect your Freighter wallet/ })).toBeNull();
+    expect(screen.queryByRole("button", { name: /Connect your wallet/ })).toBeNull();
     expect(screen.getByRole("link", { name: "View reputation" }).getAttribute("href")).toBe(
       `/profile/${CLIENT}`,
     );
@@ -463,6 +463,38 @@ describe("Dashboard job list", () => {
 
     // Otherwise the response settles into a component that is gone.
     expect(signal.aborted).toBe(true);
+  });
+
+  it("debounces rapid search typing into one request (#291)", async () => {
+    render(<Dashboard />);
+    await screen.findByText("No jobs found.");
+
+    const callsBeforeTyping = h.fetchJobs.mock.calls.length;
+    const input = screen.getByLabelText(/Search jobs/);
+
+    fireEvent.change(input, { target: { value: "r" } });
+    fireEvent.change(input, { target: { value: "re" } });
+    fireEvent.change(input, { target: { value: "redesign" } });
+
+    // Nothing is fetched until the input has been quiet for 300ms.
+    expect(h.fetchJobs).toHaveBeenCalledTimes(callsBeforeTyping);
+
+    await waitFor(
+      () =>
+        expect(lastQuery()).toEqual({
+          status: undefined,
+          page: 1,
+          limit: 10,
+          q: "redesign",
+        }),
+      { timeout: 1_500 },
+    );
+
+    // The three keystrokes produced exactly one searched request.
+    const searched = h.fetchJobs.mock.calls.filter(
+      ([query]) => (query as { q?: string }).q !== undefined,
+    );
+    expect(searched).toHaveLength(1);
   });
 
   it("filters jobs by search query and sort option", async () => {

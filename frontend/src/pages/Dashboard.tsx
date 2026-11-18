@@ -13,7 +13,7 @@
  * pagination control is hidden while it is on.
  */
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import Layout from "../components/Layout";
 import StatusBadge from "../components/StatusBadge";
@@ -34,6 +34,7 @@ import {
 import { SKILL_TAGS, tagLabel } from "../lib/tags";
 import { useSavedJobs } from "../hooks/useSavedJobs";
 import { useWallet } from "../hooks/wallet-context";
+import { useDebounce } from "../hooks/useDebounce";
 import { parseEscrowId } from "../lib/escrowId";
 import { formatDate, formatRemaining } from "../lib/time";
 
@@ -50,6 +51,8 @@ export default function Dashboard() {
   const [tag, setTag] = useState("");
   const [searchQuery, setSearchQuery] = useState("");
   const [sort, setSort] = useState("");
+  // The input stays responsive while the API only sees the settled value.
+  const debouncedSearch = useDebounce(searchQuery, 300);
   const [savedOnly, setSavedOnly] = useState(false);
   const { savedJobs, isSaved, toggle, pendingId, error: savedError } = useSavedJobs();
   const [jobs, setJobs] = useState<JobApi[]>([]);
@@ -87,7 +90,7 @@ export default function Dashboard() {
           {
             status: status || undefined,
             tag: tag || undefined,
-            ...(searchQuery.trim() ? { q: searchQuery.trim() } : {}),
+            ...(debouncedSearch.trim() ? { q: debouncedSearch.trim() } : {}),
             ...(sort ? { sort } : {}),
             page: pageToLoad,
             limit: PAGE_SIZE,
@@ -105,11 +108,21 @@ export default function Dashboard() {
         setJobsLoading(false);
       }
     },
-    [status, tag, searchQuery, sort],
+    [status, tag, debouncedSearch, sort],
   );
+
+  const inFlight = useRef<AbortController | null>(null);
+
+  // A new keystroke supersedes whatever request the old query still has in
+  // flight, even before the debounce fires; the effect below only aborts when
+  // the *settled* query changes.
+  useEffect(() => {
+    inFlight.current?.abort();
+  }, [searchQuery]);
 
   useEffect(() => {
     const controller = new AbortController();
+    inFlight.current = controller;
     void load(1, false, controller.signal);
     return () => controller.abort();
   }, [load]);
@@ -208,7 +221,7 @@ export default function Dashboard() {
       {!publicKey ? (
         <p>
           <button onClick={() => void connect()} disabled={connecting}>
-            {connecting ? "Connecting…" : "Connect your Freighter wallet"}
+            {connecting ? "Connecting…" : "Connect your wallet"}
           </button>{" "}
           to post or manage jobs.
         </p>

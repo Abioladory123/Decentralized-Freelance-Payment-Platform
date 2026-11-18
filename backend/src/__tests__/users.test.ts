@@ -1,6 +1,7 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import express from "express";
 import type { Server } from "node:http";
+import { freelancerDirectoryCache, invalidateFreelancerDirectory } from "../lib/cache";
 
 interface FakeUser {
   id: string;
@@ -75,6 +76,9 @@ describe("GET /api/users/freelancers (#68)", () => {
   });
 
   beforeEach(() => {
+    // The route caches successful directory pages for 60s; a test must not see
+    // a page another test populated.
+    freelancerDirectoryCache.clear();
     h.count.mockClear();
     h.queryRaw.mockClear();
     fakeUsers = [
@@ -275,5 +279,46 @@ interface FreelancerDirectoryResponse {
     expect(res.status).toBe(200);
     const data = (await res.json()) as { displayName: string };
     expect(data.displayName).toBe("Alice Developer");
+  });
+
+  it("serves a repeated directory query from cache and reports the hit (#290)", async () => {
+    const first = await fetch(`${baseUrl}/api/users/freelancers`);
+    expect(first.headers.get("x-cache")).toBe("MISS");
+    expect(first.headers.get("cache-control")).toBe("public, max-age=60");
+    const firstBody = await first.json();
+    const countCalls = h.count.mock.calls.length;
+    const queryCalls = h.queryRaw.mock.calls.length;
+
+    const second = await fetch(`${baseUrl}/api/users/freelancers`);
+
+    expect(second.headers.get("x-cache")).toBe("HIT");
+    expect(await second.json()).toEqual(firstBody);
+    // A hit must not touch the database at all.
+    expect(h.count).toHaveBeenCalledTimes(countCalls);
+    expect(h.queryRaw).toHaveBeenCalledTimes(queryCalls);
+  });
+
+  it("keys cached pages by every query input", async () => {
+    const first = await fetch(`${baseUrl}/api/users/freelancers?page=1&limit=2`);
+    expect(first.headers.get("x-cache")).toBe("MISS");
+
+    // A different page is a different SQL query, so it must not reuse page 1.
+    const second = await fetch(`${baseUrl}/api/users/freelancers?page=2&limit=2`);
+    expect(second.headers.get("x-cache")).toBe("MISS");
+
+    // Repeating the first page is now a hit even though page 2 was cached last.
+    const third = await fetch(`${baseUrl}/api/users/freelancers?page=1&limit=2`);
+    expect(third.headers.get("x-cache")).toBe("HIT");
+  });
+
+  it("re-reads the database after the cache is invalidated", async () => {
+    await (await fetch(`${baseUrl}/api/users/freelancers`)).json();
+    const queryCalls = h.queryRaw.mock.calls.length;
+
+    invalidateFreelancerDirectory();
+
+    const res = await fetch(`${baseUrl}/api/users/freelancers`);
+    expect(res.headers.get("x-cache")).toBe("MISS");
+    expect(h.queryRaw.mock.calls.length).toBeGreaterThan(queryCalls);
   });
 });

@@ -40,10 +40,21 @@ const builtTxs = vi.hoisted(() => [] as unknown[]);
 const h = vi.hoisted(() => ({
   job: { update: vi.fn(), findUnique: vi.fn() },
   user: { findUnique: vi.fn() },
+  milestone: { deleteMany: vi.fn(), createMany: vi.fn() },
+  deliverable: { count: vi.fn() },
   buildCreateArgs: vi.fn(),
 }));
 
-vi.mock("../db", () => ({ prisma: { job: h.job, user: h.user } }));
+vi.mock("../db", () => ({
+  prisma: {
+    job: h.job,
+    user: h.user,
+    milestone: h.milestone,
+    deliverable: h.deliverable,
+    $transaction: (fn: (tx: unknown) => unknown) =>
+      fn({ milestone: h.milestone, job: h.job, deliverable: h.deliverable }),
+  },
+}));
 
 vi.mock("../lib/escrowArgs", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../lib/escrowArgs")>();
@@ -119,6 +130,9 @@ beforeEach(() => {
   h.job.update.mockReset();
   h.job.findUnique.mockReset();
   h.user.findUnique.mockReset();
+  h.milestone.deleteMany.mockReset();
+  h.milestone.createMany.mockReset();
+  h.deliverable.count.mockReset();
   h.buildCreateArgs.mockReset();
   // `requireAuth` loads the caller's current session before the request handler.
   h.user.findUnique.mockResolvedValue({ id: "auth_user", sessions: [] });
@@ -135,6 +149,18 @@ async function tokenFor(address: string): Promise<string> {
 async function post(path: string, body: unknown = {}) {
   const res = await fetch(`${baseUrl}/api/escrow${path}`, {
     method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${await tokenFor(CLIENT)}`,
+    },
+    body: JSON.stringify(body),
+  });
+  return { status: res.status, body: (await res.json()) as Record<string, unknown> };
+}
+
+async function put(path: string, body: unknown = {}) {
+  const res = await fetch(`${baseUrl}/api/escrow${path}`, {
+    method: "PUT",
     headers: {
       "Content-Type": "application/json",
       Authorization: `Bearer ${await tokenFor(CLIENT)}`,
@@ -275,5 +301,161 @@ describe("POST /api/escrow/sync/:jobId — escrowId validation", () => {
 
     expect(synced).toBe(indexed);
     expect(synced).toBe("ACTIVE");
+  });
+});
+
+describe("Milestone updates deliverable preservation (issue #270)", () => {
+  it("rejects PUT /:escrowId/milestones with 400 when attached deliverables exist", async () => {
+    h.job.findUnique.mockResolvedValue({
+      id: "job_1",
+      escrowId: 10n,
+      asset: "XLM",
+      client: { stellarAddress: CLIENT },
+      milestones: [
+        {
+          id: "m_1",
+          index: 0,
+          deliverables: [{ id: "d_1", fileName: "design.png" }],
+        },
+      ],
+    });
+
+    const res = await put("/10/milestones", {
+      milestones: [{ amount: 100 }],
+    });
+
+    expect(res.status).toBe(400);
+    expect(String(res.body.error)).toMatch(/deliverables/i);
+    expect(h.milestone.deleteMany).not.toHaveBeenCalled();
+  });
+
+  it("rejects POST /build/update-milestones with 400 when attached deliverables exist", async () => {
+    h.job.findUnique.mockResolvedValue({
+      id: "job_1",
+      escrowId: 10n,
+      asset: "XLM",
+      client: { stellarAddress: CLIENT },
+      milestones: [
+        {
+          id: "m_1",
+          index: 0,
+          deliverables: [{ id: "d_1", fileName: "design.png" }],
+        },
+      ],
+    });
+
+    const res = await post("/build/update-milestones", {
+      escrowId: 10,
+      milestones: [{ amount: 100 }],
+    });
+
+    expect(res.status).toBe(400);
+    expect(String(res.body.error)).toMatch(/deliverables/i);
+  });
+
+  it("allows PUT /:escrowId/milestones when no deliverables are attached", async () => {
+    h.job.findUnique.mockResolvedValue({
+      id: "job_1",
+      escrowId: 10n,
+      asset: "XLM",
+      client: { stellarAddress: CLIENT },
+      milestones: [
+        {
+          id: "m_1",
+          index: 0,
+          deliverables: [],
+        },
+      ],
+    });
+    h.job.update.mockResolvedValue({
+      id: "job_1",
+      totalAmount: "100",
+      milestones: [{ index: 0, amount: "100" }],
+    });
+
+    const res = await put("/10/milestones", {
+      milestones: [{ amount: 100 }],
+    });
+
+    expect(res.status).toBe(200);
+    expect(h.milestone.deleteMany).toHaveBeenCalledWith({ where: { jobId: "job_1" } });
+  });
+});
+
+describe("POST /api/escrow/build/milestones-batch (issue #266)", () => {
+  const baseJob = {
+    id: "job_1",
+    escrowId: 10n,
+    asset: "XLM",
+    client: { stellarAddress: CLIENT },
+    milestones: [
+      { id: "m_0", index: 0, amount: "100", description: "First", deadline: null, deliverables: [] },
+      { id: "m_1", index: 1, amount: "200", description: "Second", deadline: null, deliverables: [] },
+    ],
+  };
+
+  it("applies add, update, and remove mutations in batch and builds valid XDR", async () => {
+    h.job.findUnique.mockResolvedValue(baseJob);
+
+    const res = await post("/build/milestones-batch", {
+      escrowId: 10,
+      operations: [
+        { type: "add", amount: 300, description: "Third" },
+        { type: "update", index: 0, amount: 150 },
+        { type: "remove", index: 1 },
+      ],
+    });
+
+    expect(res.status).toBe(200);
+    expect(res.body.xdr).toBe("assembled-xdr");
+    const milestones = res.body.milestones as Array<{ amount: number; description?: string }>;
+    expect(milestones).toHaveLength(2);
+    expect(milestones[0].amount).toBe(150);
+    expect(milestones[1].amount).toBe(300);
+  });
+
+  it("rejects batch if removing all milestones leaves 0 milestones", async () => {
+    h.job.findUnique.mockResolvedValue({
+      ...baseJob,
+      milestones: [{ id: "m_0", index: 0, amount: "100", deliverables: [] }],
+    });
+
+    const res = await post("/build/milestones-batch", {
+      escrowId: 10,
+      operations: [{ type: "remove", index: 0 }],
+    });
+
+    expect(res.status).toBe(400);
+    expect(String(res.body.error)).toMatch(/count must be between 1 and 20/i);
+  });
+
+  it("rejects batch resulting in more than 20 milestones", async () => {
+    h.job.findUnique.mockResolvedValue(baseJob);
+
+    const extraOps = Array.from({ length: 19 }, (_, i) => ({
+      type: "add" as const,
+      amount: 10,
+      description: `Extra ${i}`,
+    }));
+
+    const res = await post("/build/milestones-batch", {
+      escrowId: 10,
+      operations: extraOps,
+    });
+
+    expect(res.status).toBe(400);
+    expect(String(res.body.error)).toMatch(/count must be between 1 and 20/i);
+  });
+
+  it("rejects operations with out-of-bounds indices", async () => {
+    h.job.findUnique.mockResolvedValue(baseJob);
+
+    const res = await post("/build/milestones-batch", {
+      escrowId: 10,
+      operations: [{ type: "remove", index: 99 }],
+    });
+
+    expect(res.status).toBe(400);
+    expect(String(res.body.error)).toMatch(/invalid index/i);
   });
 });

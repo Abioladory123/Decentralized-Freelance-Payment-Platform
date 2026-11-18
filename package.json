@@ -6,7 +6,9 @@
   "scripts": {
     "prepare": "husky",
     "lint:frontend": "npm --prefix frontend run lint",
-    "fmt:contracts": "cargo fmt --manifest-path contracts/Cargo.toml --all -- --check"
+    "fmt:contracts": "cargo fmt --manifest-path contracts/Cargo.toml --all -- --check",
+    "test:e2e": "npm --prefix backend run test:e2e",
+    "test:e2e:frontend": "npm --prefix frontend run test:e2e"
   },
   "lint-staged": {
     "contracts/**/*.rs": "cargo fmt --manifest-path contracts/Cargo.toml --all -- --check",

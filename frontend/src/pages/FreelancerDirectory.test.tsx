@@ -203,6 +203,47 @@ describe("FreelancerDirectory component (#68)", () => {
     });
   });
 
+  it("debounces rapid typing into a single search request (#291)", async () => {
+    vi.mocked(api.fetchFreelancers).mockResolvedValue({
+      freelancers: [mockFreelancers[0]],
+      total: 1,
+      page: 1,
+      limit: 10,
+      totalPages: 1,
+    });
+
+    render(
+      <BrowserRouter>
+        <FreelancerDirectory />
+      </BrowserRouter>,
+    );
+
+    await waitFor(() => expect(screen.getByText("Alice Stellar")).toBeDefined());
+    const callsBeforeTyping = vi.mocked(api.fetchFreelancers).mock.calls.length;
+    const input = screen.getByPlaceholderText(/search name, bio, or address/i);
+
+    fireEvent.change(input, { target: { value: "A" } });
+    fireEvent.change(input, { target: { value: "Al" } });
+    fireEvent.change(input, { target: { value: "Alice" } });
+
+    // Typing alone must not query the API.
+    expect(api.fetchFreelancers).toHaveBeenCalledTimes(callsBeforeTyping);
+
+    await waitFor(
+      () =>
+        expect(api.fetchFreelancers).toHaveBeenCalledWith(
+          expect.objectContaining({ search: "Alice", page: 1 }),
+          expect.anything(),
+        ),
+      { timeout: 1_500 },
+    );
+
+    const searched = vi
+      .mocked(api.fetchFreelancers)
+      .mock.calls.filter(([query]) => query?.search !== undefined);
+    expect(searched).toHaveLength(1);
+  });
+
   it("displays empty state when no freelancers match", async () => {
     vi.mocked(api.fetchFreelancers).mockResolvedValue({
       freelancers: [],

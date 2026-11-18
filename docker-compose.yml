@@ -43,6 +43,22 @@ services:
       timeout: 3s
       retries: 10
 
+  # Stellar local standalone container with Soroban RPC (issue #278).
+  # Used for local contract deployment, integration testing, and sandbox lifecycle runs.
+  stellar-standalone:
+    image: stellar/quickstart:testing
+    container_name: stellar-standalone
+    command: ["--standalone", "--enable-soroban-rpc"]
+    ports:
+      - "8000:8000"
+    environment:
+      NETWORK: standalone
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:8000/soroban/rpc -d '{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"getHealth\"}' -H 'Content-Type: application/json' || exit 1"]
+      interval: 5s
+      timeout: 5s
+      retries: 15
+
   # One-off database migration service (issue #302).
   # Runs `npx prisma migrate deploy` once after PostgreSQL is healthy,
   # separating database schema migrations from web server container startup.

@@ -33,7 +33,9 @@ import { sendCachedJson } from "../lib/cache";
 import { buildTx } from "../lib/soroban";
 import { isValidStellarAddress } from "../lib/stellarAddress";
 import { FUNDED_JOB_STATUS } from "../lib/jobStatus";
+import { Prisma } from "@prisma/client";
 import { prisma } from "../db";
+import { withTransactionRetry } from "../lib/transactionRetry";
 import { requireAuth } from "../middleware/auth";
 import { validate } from "../middleware/validate";
 import { AppError } from "../middleware/errorHandler";
@@ -76,7 +78,14 @@ function assetForJob(assetSymbol: string) {
 async function loadEditableJob(escrowId: bigint, address: string) {
   const job = await prisma.job.findUnique({
     where: { escrowId },
-    include: { client: true },
+    include: {
+      client: true,
+      milestones: {
+        include: {
+          deliverables: true,
+        },
+      },
+    },
   });
   if (!job) throw new AppError(404, "No job is linked to that escrow id");
   if (job.client.stellarAddress !== address) {
@@ -158,6 +167,15 @@ escrowRouter.post(
     try {
       const { escrowId, milestones } = req.body as z.infer<typeof updateMilestonesSchema>;
       const job = await loadEditableJob(BigInt(escrowId), res.locals.stellarAddress);
+
+      // Disallow updating milestones if deliverables already exist (issue #270)
+      const hasDeliverables = (job.milestones as Array<{ deliverables?: unknown[] }> | undefined)?.some(
+        (m) => Array.isArray(m.deliverables) && m.deliverables.length > 0,
+      );
+      if (hasDeliverables) {
+        throw new AppError(400, "Cannot delete or update milestones with attached deliverables");
+      }
+
       const asset = assetForJob(job.asset);
 
       const contract = new Contract(config.ESCROW_CONTRACT_ID);
@@ -175,6 +193,120 @@ escrowRouter.post(
       );
 
       res.json({ xdr });
+    } catch (err) {
+      next(err);
+    }
+  },
+);
+
+// POST /api/escrow/build/milestones-batch (issue #266)
+export const milestoneBatchOperationSchema = z.discriminatedUnion("type", [
+  z.object({
+    type: z.literal("add"),
+    amount: z.number().positive(),
+    description: z.string().max(200).optional(),
+    deadline: z.string().datetime().optional(),
+    index: z.number().int().min(0).optional(),
+  }),
+  z.object({
+    type: z.literal("update"),
+    index: z.number().int().min(0),
+    amount: z.number().positive().optional(),
+    description: z.string().max(200).optional(),
+    deadline: z.string().datetime().optional(),
+  }),
+  z.object({
+    type: z.literal("remove"),
+    index: z.number().int().min(0),
+  }),
+]);
+
+export const milestonesBatchSchema = z.object({
+  escrowId: escrowIdSchema,
+  operations: z.array(milestoneBatchOperationSchema).min(1),
+});
+
+escrowRouter.post(
+  "/build/milestones-batch",
+  requireAuth,
+  validate(milestonesBatchSchema),
+  async (req, res, next) => {
+    try {
+      const { escrowId, operations } = req.body as z.infer<typeof milestonesBatchSchema>;
+      const job = await loadEditableJob(BigInt(escrowId), res.locals.stellarAddress);
+
+      // Disallow updating milestones if deliverables already exist (issue #270)
+      const hasDeliverables = (job.milestones as Array<{ deliverables?: unknown[] }> | undefined)?.some(
+        (m) => Array.isArray(m.deliverables) && m.deliverables.length > 0,
+      );
+      if (hasDeliverables) {
+        throw new AppError(400, "Cannot delete or update milestones with attached deliverables");
+      }
+
+      // Start with the job's current milestone state ordered by index
+      const working = [...job.milestones]
+        .sort((a, b) => a.index - b.index)
+        .map((m) => ({
+          amount: Number(m.amount),
+          description: m.description ?? undefined,
+          deadline: m.deadline ? m.deadline.toISOString() : undefined,
+        }));
+
+      // Apply batch operations sequentially
+      for (const op of operations) {
+        if (op.type === "add") {
+          const item = {
+            amount: op.amount,
+            description: op.description,
+            deadline: op.deadline,
+          };
+          if (op.index !== undefined && op.index >= 0 && op.index <= working.length) {
+            working.splice(op.index, 0, item);
+          } else {
+            working.push(item);
+          }
+        } else if (op.type === "update") {
+          if (op.index < 0 || op.index >= working.length) {
+            throw new AppError(400, `Cannot update milestone at invalid index ${op.index}`);
+          }
+          const curr = working[op.index];
+          working[op.index] = {
+            amount: op.amount !== undefined ? op.amount : curr.amount,
+            description: op.description !== undefined ? op.description : curr.description,
+            deadline: op.deadline !== undefined ? op.deadline : curr.deadline,
+          };
+        } else if (op.type === "remove") {
+          if (op.index < 0 || op.index >= working.length) {
+            throw new AppError(400, `Cannot remove milestone at invalid index ${op.index}`);
+          }
+          working.splice(op.index, 1);
+        }
+      }
+
+      // Constraints: count between 1 and 20, all amounts positive
+      if (working.length < 1 || working.length > 20) {
+        throw new AppError(400, "Milestone count must be between 1 and 20");
+      }
+      if (working.some((m) => !m.amount || m.amount <= 0)) {
+        throw new AppError(400, "All milestone amounts must be positive");
+      }
+
+      const asset = assetForJob(job.asset);
+      const contract = new Contract(config.ESCROW_CONTRACT_ID);
+      const args = buildUpdateMilestonesArgs({
+        escrowId: BigInt(escrowId),
+        milestones: working.map((m) => ({
+          amount: toBaseUnits(m.amount, asset.decimals),
+          deadline: BigInt(m.deadline ? Math.floor(new Date(m.deadline).getTime() / 1000) : 0),
+        })),
+      });
+
+      const xdr = await buildTx(
+        res.locals.stellarAddress,
+        contract.call("update_milestones", ...args),
+      );
+
+      res.json({ xdr, milestones: working });
     } catch (err) {
       next(err);
     }
@@ -206,6 +338,24 @@ escrowRouter.put(
       const escrowId = BigInt(escrowIdText);
       const { milestones } = req.body as z.infer<typeof recordMilestonesSchema>;
       const job = await loadEditableJob(escrowId, res.locals.stellarAddress);
+
+      // Check if any existing milestones have attached deliverables (issue #270).
+      // Disallow deleting/updating milestones if deliverables already exist to preserve work audit trail.
+      const hasDeliverables = (job.milestones as Array<{ deliverables?: unknown[] }> | undefined)?.some(
+        (m) => Array.isArray(m.deliverables) && m.deliverables.length > 0,
+      );
+      if (hasDeliverables) {
+        throw new AppError(400, "Cannot delete or update milestones with attached deliverables");
+      }
+      if (typeof (prisma as unknown as { deliverable?: { count: (args: unknown) => Promise<number> } }).deliverable?.count === "function") {
+        const count = await (prisma as unknown as { deliverable: { count: (args: unknown) => Promise<number> } }).deliverable.count({
+          where: { milestone: { jobId: job.id } },
+        });
+        if (count > 0) {
+          throw new AppError(400, "Cannot delete or update milestones with attached deliverables");
+        }
+      }
+
       const asset = assetForJob(job.asset); // reject an asset the registry does not know
 
       // Sum in base units (see POST /api/jobs): a float total would store
@@ -216,26 +366,40 @@ escrowRouter.put(
       );
 
       // The edit replaces the breakdown, so the mirror has to replace its rows
-      // too — otherwise a shorter list leaves orphaned milestones behind.
-      const updated = await prisma.$transaction(async (tx) => {
-        await tx.milestone.deleteMany({ where: { jobId: job.id } });
-        await tx.milestone.createMany({
-          data: milestones.map((m, i) => ({
-            jobId: job.id,
-            index: i,
-            amount: formatAmount(
-              toBaseUnits(m.amount, asset.decimals),
-              asset.decimals,
-            ),
-            description: m.description ?? `Milestone ${i + 1}`,
-            deadline: m.deadline ? new Date(m.deadline) : null,
-          })),
-        });
-        return tx.job.update({
-          where: { id: job.id },
-          data: { totalAmount },
-          include: { milestones: { orderBy: { index: "asc" } } },
-        });
+      // too — executed under RepeatableRead isolation with retry (issue #276).
+      const execWithRetry = typeof withTransactionRetry === "function"
+        ? withTransactionRetry
+        : ((fn: () => Promise<unknown>) => fn());
+
+      const updated = await execWithRetry(async () => {
+        const runTransaction = typeof prisma.$transaction === "function"
+          ? (fn: (tx: Prisma.TransactionClient) => Promise<unknown>, opts?: { isolationLevel?: Prisma.TransactionIsolationLevel }) =>
+              prisma.$transaction(fn, opts)
+          : (fn: (tx: typeof prisma) => Promise<unknown>) => fn(prisma);
+
+        return runTransaction(
+          async (tx) => {
+            await tx.milestone.deleteMany({ where: { jobId: job.id } });
+            await tx.milestone.createMany({
+              data: milestones.map((m, i) => ({
+                jobId: job.id,
+                index: i,
+                amount: formatAmount(
+                  toBaseUnits(m.amount, asset.decimals),
+                  asset.decimals,
+                ),
+                description: m.description ?? `Milestone ${i + 1}`,
+                deadline: m.deadline ? new Date(m.deadline) : null,
+              })),
+            });
+            return tx.job.update({
+              where: { id: job.id },
+              data: { totalAmount },
+              include: { milestones: { orderBy: { index: "asc" } } },
+            });
+          },
+          { isolationLevel: Prisma.TransactionIsolationLevel.RepeatableRead },
+        );
       });
 
       res.json(updated);
@@ -373,19 +537,36 @@ escrowRouter.post("/sync/:jobId", requireAuth, validate(syncSchema), async (req,
   try {
     const { escrowId } = req.body as z.infer<typeof syncSchema>;
 
-    const job = await prisma.job.findUnique({
-      where: { id: req.params.jobId },
-      include: { client: true },
-    });
-    if (!job) throw new AppError(404, "Job not found");
-    if (job.client.stellarAddress !== res.locals.stellarAddress) {
-      throw new AppError(403, "Only the job's client can link its escrow");
-    }
+    const execWithRetry = typeof withTransactionRetry === "function"
+      ? withTransactionRetry
+      : ((fn: () => Promise<unknown>) => fn());
 
-    const updated = await prisma.job.update({
-      where: { id: job.id },
-      data: { escrowId: BigInt(escrowId), status: FUNDED_JOB_STATUS },
+    const updated = await execWithRetry(async () => {
+      const runTransaction = typeof prisma.$transaction === "function"
+        ? (fn: (tx: Prisma.TransactionClient) => Promise<unknown>, opts?: { isolationLevel?: Prisma.TransactionIsolationLevel }) =>
+            prisma.$transaction(fn, opts)
+        : (fn: (tx: typeof prisma) => Promise<unknown>) => fn(prisma);
+
+      return runTransaction(
+        async (tx) => {
+          const job = await tx.job.findUnique({
+            where: { id: req.params.jobId },
+            include: { client: true },
+          });
+          if (!job) throw new AppError(404, "Job not found");
+          if (job.client.stellarAddress !== res.locals.stellarAddress) {
+            throw new AppError(403, "Only the job's client can link its escrow");
+          }
+
+          return tx.job.update({
+            where: { id: job.id },
+            data: { escrowId: BigInt(escrowId), status: FUNDED_JOB_STATUS },
+          });
+        },
+        { isolationLevel: Prisma.TransactionIsolationLevel.RepeatableRead },
+      );
     });
+
     // If events arrived before the job was linked, reconcile any dead letters recorded for it
     await prisma.indexerDeadLetter
       ?.deleteMany({

@@ -28,6 +28,7 @@ import { TransactionBuilder, SorobanRpc, xdr } from "@stellar/stellar-sdk";
 import {
   CONTRACT_ADDRESSES,
   buildContractCall,
+  getTransactionHashFromXdr,
   milestonesToScVal,
   networkPassphrase,
   pollTransaction,
@@ -230,20 +231,43 @@ export function useEscrow() {
       const toastId = startToast(`Building ${label} transaction…`);
       try {
         const built = await buildContractCall(pk, contractId, method, args);
-        updateToast(toastId, "signing", `Awaiting signature for ${label}…`);
-        const signed = await sign(built.xdr);
-        const tx = TransactionBuilder.fromXDR(signed, networkPassphrase);
-        const sent = await server.sendTransaction(tx);
-        if (sent.status === "ERROR") {
-          throw new Error(`Transaction rejected: ${JSON.stringify(sent.errorResult)}`);
+        const txHash = getTransactionHashFromXdr(built.xdr);
+        updateToast(toastId, "signing", `Awaiting signature for ${label}…`, undefined, built.xdr);
+
+        let confirmedHash: string;
+        try {
+          const signed = await sign(built.xdr);
+          const tx = TransactionBuilder.fromXDR(signed, networkPassphrase);
+          const sent = await server.sendTransaction(tx);
+          if (sent.status === "ERROR") {
+            throw new Error(`Transaction rejected: ${JSON.stringify(sent.errorResult)}`);
+          }
+          confirmedHash = sent.hash;
+          const receipt = await pollTransaction(sent.hash);
+          if (receipt.status !== SorobanRpc.Api.GetTransactionStatus.SUCCESS) {
+            throw new Error(`Transaction ${sent.hash} failed (${receipt.status})`);
+          }
+        } catch (signErr) {
+          // If extension signing failed or was bypassed, check if submitted via mobile wallet (SEP-0007 fallback)
+          if (txHash) {
+            try {
+              const mobileReceipt = await pollTransaction(txHash, 2, 1000);
+              if (mobileReceipt.status === SorobanRpc.Api.GetTransactionStatus.SUCCESS) {
+                confirmedHash = txHash;
+              } else {
+                throw signErr;
+              }
+            } catch {
+              throw signErr;
+            }
+          } else {
+            throw signErr;
+          }
         }
-        const receipt = await pollTransaction(sent.hash);
-        if (receipt.status !== SorobanRpc.Api.GetTransactionStatus.SUCCESS) {
-          throw new Error(`Transaction ${sent.hash} failed (${receipt.status})`);
-        }
-        updateToast(toastId, "confirmed", `${label} confirmed`, sent.hash);
+
+        updateToast(toastId, "confirmed", `${label} confirmed`, confirmedHash);
         // The return value does not survive submission, so use the simulated one.
-        return { hash: sent.hash, result: built.result };
+        return { hash: confirmedHash, result: built.result };
       } catch (e) {
         updateToast(toastId, "failed", friendlyError(e));
         throw e;

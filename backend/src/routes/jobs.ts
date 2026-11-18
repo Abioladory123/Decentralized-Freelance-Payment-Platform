@@ -17,10 +17,13 @@
 
 import { Router, type RequestHandler } from "express";
 import { z } from "zod";
+import { Prisma } from "@prisma/client";
 import { config } from "../config";
 import { prisma } from "../db";
+import { withTransactionRetry } from "../lib/transactionRetry";
 import { requireAuth, optionalAuth } from "../middleware/auth";
 import { validate } from "../middleware/validate";
+import { idempotency } from "../middleware/idempotency";
 import { AppError } from "../middleware/errorHandler";
 import {
   formatAmount,
@@ -54,7 +57,22 @@ jobsRouter.get("/", async (req, res, next) => {
     if (!parsed.success) {
       throw new AppError(400, parsed.error.issues.map((i) => i.message).join(", "));
     }
-    const { status, client, freelancer, tag, q, sort, page, limit, isVerified } = parsed.data;
+    const {
+      status,
+      client,
+      freelancer,
+      tag,
+      q,
+      sort,
+      sortBy,
+      sortOrder,
+      page,
+      limit,
+      isVerified,
+      asset,
+      createdAfter,
+      createdBefore,
+    } = parsed.data;
 
     // A tag the taxonomy does not know is a caller mistake, not "no results" —
     // answering 400 with the accepted slugs keeps a typo from looking like an
@@ -68,6 +86,19 @@ jobsRouter.get("/", async (req, res, next) => {
       tagFilter = value;
     }
 
+    // Date range filters (issue #265)
+    const dateFilter: { gte?: Date; lte?: Date } = {};
+    if (createdAfter) {
+      const d = new Date(createdAfter);
+      if (isNaN(d.getTime())) throw new AppError(400, "Invalid createdAfter date format");
+      dateFilter.gte = d;
+    }
+    if (createdBefore) {
+      const d = new Date(createdBefore);
+      if (isNaN(d.getTime())) throw new AppError(400, "Invalid createdBefore date format");
+      dateFilter.lte = d;
+    }
+
     // Keyword search (issue #62): one case-insensitive substring match across
     // the two human-readable fields. Empty/whitespace `q` means "no filter".
     const searchFilter = q
@@ -79,25 +110,31 @@ jobsRouter.get("/", async (req, res, next) => {
         }
       : {};
 
-    // Sort (issue #62). The default stays newest-first, matching the index on
-    // (status, createdAt); an unrecognised value is rejected by the schema.
-    const orderBy =
-      sort === "oldest"
-        ? { createdAt: "asc" as const }
-        : sort === "amount_desc"
-          ? { totalAmount: "desc" as const }
-          : sort === "amount_asc"
-            ? { totalAmount: "asc" as const }
-            : { createdAt: "desc" as const };
+    // Sort order (issue #62, #265).
+    let orderBy: Record<string, "asc" | "desc">;
+    if (sortBy) {
+      const order = sortOrder === "asc" ? ("asc" as const) : ("desc" as const);
+      orderBy = { [sortBy]: order };
+    } else if (sort === "oldest") {
+      orderBy = { createdAt: "asc" };
+    } else if (sort === "amount_desc") {
+      orderBy = { totalAmount: "desc" };
+    } else if (sort === "amount_asc") {
+      orderBy = { totalAmount: "asc" };
+    } else {
+      orderBy = { createdAt: "desc" };
+    }
 
     const jobs = await prisma.job.findMany({
       where: {
         ...(status ? { status } : {}),
+        ...(asset ? { asset } : {}),
         ...(client ? { client: { stellarAddress: client } } : {}),
         ...(freelancer ? { freelancer: { stellarAddress: freelancer } } : {}),
         // Postgres array containment: a job matches when its tags include this one.
         ...(tagFilter ? { tags: { has: tagFilter } } : {}),
         ...(isVerified !== undefined ? { isVerified } : {}),
+        ...(Object.keys(dateFilter).length > 0 ? { createdAt: dateFilter } : {}),
         ...searchFilter,
       },
       include: { milestones: true, client: true, freelancer: true },
@@ -206,8 +243,8 @@ jobsRouter.delete("/:id/save", requireAuth, async (req, res, next) => {
   }
 });
 
-// POST /api/jobs
-jobsRouter.post("/", requireAuth, validate(createJobSchema), async (req, res, next) => {
+// POST /api/jobs (idempotent, issue #267)
+jobsRouter.post("/", requireAuth, idempotency(), validate(createJobSchema), async (req, res, next) => {
   try {
     const { title, description, milestones, expiresAt, asset, tags } = req.body as z.infer<
       typeof createJobSchema
@@ -312,8 +349,8 @@ jobsRouter.get("/:id", optionalAuth, async (req, res, next) => {
   }
 });
 
-// POST /api/jobs/:id/proposals
-jobsRouter.post("/:id/proposals", requireAuth, validate(createProposalSchema), async (req, res, next) => {
+// POST /api/jobs/:id/proposals (idempotent, issue #267)
+jobsRouter.post("/:id/proposals", requireAuth, idempotency(), validate(createProposalSchema), async (req, res, next) => {
   try {
     const job = await prisma.job.findUnique({
       where: { id: req.params.id },
@@ -351,8 +388,8 @@ jobsRouter.post("/:id/proposals", requireAuth, validate(createProposalSchema), a
         include: { freelancer: true },
       });
       res.status(201).json(proposal);
-    } catch (e: any) {
-      if (e?.code === "P2002") {
+    } catch (e: unknown) {
+      if ((e as { code?: string })?.code === "P2002") {
         throw new AppError(409, "You have already applied for this job");
       }
       throw e;
@@ -376,40 +413,64 @@ jobsRouter.get("/:id/proposals", async (req, res, next) => {
   }
 });
 
-// PUT /api/jobs/:id/assign
-jobsRouter.put("/:id/assign", requireAuth, validate(assignJobSchema), async (req, res, next) => {
+// PUT /api/jobs/:id/assign — assign freelancer under RepeatableRead isolation (issue #276, #267)
+jobsRouter.put("/:id/assign", requireAuth, idempotency(), validate(assignJobSchema), async (req, res, next) => {
   try {
-    const job = await prisma.job.findUnique({ where: { id: req.params.id }, include: { client: true } });
-    if (!job) throw new AppError(404, "Job not found");
-    if (job.client.stellarAddress !== res.locals.stellarAddress) {
-      throw new AppError(403, "Only the client can assign a freelancer");
-    }
-
-    if (job.freelancerId) {
-      throw new AppError(400, "Job is already assigned to a freelancer");
-    }
-
     const { freelancerAddress } = req.body as z.infer<typeof assignJobSchema>;
-    if (job.client.stellarAddress === freelancerAddress) {
-      throw new AppError(400, "Client cannot be assigned as freelancer to their own job");
-    }
 
-    const freelancer = await prisma.user.findUnique({ where: { stellarAddress: freelancerAddress } });
-    if (!freelancer) throw new AppError(404, "Freelancer not found");
+    const execWithRetry = typeof withTransactionRetry === "function"
+      ? withTransactionRetry
+      : ((fn: () => Promise<unknown>) => fn());
 
-    const updated = await prisma.job.update({
-      where: { id: req.params.id },
-      data: { freelancerId: freelancer.id },
-    });
+    const updated = await execWithRetry(async () => {
+      const runTransaction = typeof prisma.$transaction === "function"
+        ? (fn: (tx: Prisma.TransactionClient) => Promise<unknown>, opts?: { isolationLevel?: Prisma.TransactionIsolationLevel }) =>
+            prisma.$transaction(fn, opts)
+        : (fn: (tx: typeof prisma) => Promise<unknown>) => fn(prisma);
 
-    // Accept selected proposal and reject other pending proposals
-    await prisma.proposal.updateMany({
-      where: { jobId: job.id, freelancerId: freelancer.id },
-      data: { status: "ACCEPTED" },
-    });
-    await prisma.proposal.updateMany({
-      where: { jobId: job.id, freelancerId: { not: freelancer.id }, status: "PENDING" },
-      data: { status: "REJECTED" },
+      return runTransaction(
+        async (tx) => {
+          const job = await tx.job.findUnique({
+            where: { id: req.params.id },
+            include: { client: true },
+          });
+          if (!job) throw new AppError(404, "Job not found");
+          if (job.client.stellarAddress !== res.locals.stellarAddress) {
+            throw new AppError(403, "Only the client can assign a freelancer");
+          }
+
+          if (job.freelancerId) {
+            throw new AppError(400, "Job is already assigned to a freelancer");
+          }
+
+          if (job.client.stellarAddress === freelancerAddress) {
+            throw new AppError(400, "Client cannot be assigned as freelancer to their own job");
+          }
+
+          const freelancer = await tx.user.findUnique({
+            where: { stellarAddress: freelancerAddress },
+          });
+          if (!freelancer) throw new AppError(404, "Freelancer not found");
+
+          const assigned = await tx.job.update({
+            where: { id: req.params.id },
+            data: { freelancerId: freelancer.id },
+          });
+
+          // Accept selected proposal and reject other pending proposals
+          await tx.proposal.updateMany({
+            where: { jobId: job.id, freelancerId: freelancer.id },
+            data: { status: "ACCEPTED" },
+          });
+          await tx.proposal.updateMany({
+            where: { jobId: job.id, freelancerId: { not: freelancer.id }, status: "PENDING" },
+            data: { status: "REJECTED" },
+          });
+
+          return assigned;
+        },
+        { isolationLevel: Prisma.TransactionIsolationLevel.RepeatableRead },
+      );
     });
 
     res.json(updated);

@@ -16,6 +16,9 @@ import Toaster from "./Toaster";
 // helper is used here.
 vi.mock("../lib/stellar", () => ({
   explorerTxUrl: (hash: string) => `https://stellar.expert/explorer/testnet/tx/${hash}`,
+  generateSep0007Uri: (xdr: string) => `web+stellar:tx?xdr=${encodeURIComponent(xdr)}`,
+  getTransactionHashFromXdr: () => "mock-tx-hash",
+  pollTransaction: vi.fn().mockImplementation(() => new Promise(() => {})),
 }));
 
 /**
@@ -110,5 +113,28 @@ describe("Toaster", () => {
     });
 
     expect(screen.queryByText("Building release milestone transaction…")).toBeNull();
+  });
+
+  it("renders a 'Sign on Mobile' fallback button during signing when xdr is present", () => {
+    renderToaster();
+
+    let id = "";
+    act(() => {
+      id = api!.start("Building release milestone transaction…");
+      api!.update(id, "signing", "Awaiting signature for release milestone…", undefined, "AAAAtestxdr==");
+    });
+
+    const mobileBtn = screen.getByRole("button", { name: "Sign on Mobile" });
+    expect(mobileBtn).toBeTruthy();
+
+    // Clicking the mobile button opens the MobileSignModal
+    act(() => {
+      mobileBtn.click();
+    });
+
+    expect(screen.getByRole("dialog")).toBeTruthy();
+    expect(screen.getByText("Sign on Mobile (SEP-0007)")).toBeTruthy();
+    const link = screen.getByRole("link", { name: "Open in Mobile Wallet" }) as HTMLAnchorElement;
+    expect(link.href).toContain("web+stellar:tx?xdr=AAAAtestxdr%3D%3D");
   });
 });
