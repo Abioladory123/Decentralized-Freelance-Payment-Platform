@@ -12,17 +12,44 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import express from "express";
 import type { Server } from "node:http";
+import { SignJWT } from "jose";
 
 const h = vi.hoisted(() => ({
-  job: { findMany: vi.fn() },
+  job: { findMany: vi.fn(), deleteMany: vi.fn() },
   chainEvent: { findMany: vi.fn(), count: vi.fn() },
+  user: { findUnique: vi.fn(), update: vi.fn() },
+  message: { findMany: vi.fn() },
+  savedJob: { deleteMany: vi.fn() },
+  notification: { deleteMany: vi.fn() },
+  userSession: { deleteMany: vi.fn() },
+  milestone: { deleteMany: vi.fn() },
+  proposal: { deleteMany: vi.fn() },
 }));
 
 vi.mock("../db", () => ({
-  prisma: { job: h.job, chainEvent: h.chainEvent, authNonce: {} },
+  prisma: {
+    job: h.job,
+    chainEvent: h.chainEvent,
+    user: h.user,
+    message: h.message,
+    savedJob: h.savedJob,
+    notification: h.notification,
+    userSession: h.userSession,
+    milestone: h.milestone,
+    proposal: h.proposal,
+    authNonce: {},
+  },
 }));
 
 const USER = "GBPLJHDI6RPLS4EEJJTM7EVEV3UNTXLFAACWA63QSTHGLWH5RO3LQ75B";
+const JWT_SECRET = process.env.JWT_SECRET || "development-secret-change-in-production";
+
+async function tokenFor(address: string): Promise<string> {
+  return new SignJWT({ sub: address })
+    .setProtectedHeader({ alg: "HS256" })
+    .setExpirationTime("1h")
+    .sign(new TextEncoder().encode(JWT_SECRET));
+}
 
 let baseUrl: string;
 let server: Server;
@@ -55,10 +82,35 @@ afterAll(async () => {
 beforeEach(() => {
   h.job.findMany.mockReset();
   h.job.findMany.mockResolvedValue([]);
+  h.job.deleteMany.mockReset();
+  h.job.deleteMany.mockResolvedValue({ count: 0 });
   h.chainEvent.findMany.mockReset();
   h.chainEvent.findMany.mockResolvedValue([]);
   h.chainEvent.count.mockReset();
   h.chainEvent.count.mockResolvedValue(0);
+  h.user.findUnique.mockReset();
+  h.user.findUnique.mockImplementation(
+    ({ where, select }: { where: { stellarAddress: string }; select?: { sessions?: unknown } }) =>
+      Promise.resolve(
+        select?.sessions
+          ? { id: `auth_${where.stellarAddress}`, sessions: [] }
+          : { id: `user_${where.stellarAddress}`, stellarAddress: where.stellarAddress },
+      ),
+  );
+  h.user.update.mockReset();
+  h.user.update.mockResolvedValue({});
+  h.message.findMany.mockReset();
+  h.message.findMany.mockResolvedValue([]);
+  h.savedJob.deleteMany.mockReset();
+  h.savedJob.deleteMany.mockResolvedValue({ count: 0 });
+  h.notification.deleteMany.mockReset();
+  h.notification.deleteMany.mockResolvedValue({ count: 0 });
+  h.userSession.deleteMany.mockReset();
+  h.userSession.deleteMany.mockResolvedValue({ count: 0 });
+  h.milestone.deleteMany.mockReset();
+  h.milestone.deleteMany.mockResolvedValue({ count: 0 });
+  h.proposal.deleteMany.mockReset();
+  h.proposal.deleteMany.mockResolvedValue({ count: 0 });
 });
 
 async function get(path: string) {
@@ -276,5 +328,162 @@ describe("GET /api/users/:address/reminders (#74)", () => {
     const res = await get(`/${USER}/reminders?withinHours=abc`);
 
     expect((res.body as unknown[]).length).toBe(1);
+  });
+});
+
+describe("GET /api/users/me/export (Issue #310)", () => {
+  it("rejects unauthenticated requests with 401", async () => {
+    const res = await fetch(`${baseUrl}/api/users/me/export`);
+    expect(res.status).toBe(401);
+  });
+
+  it("exports complete structured personal data archive and writes audit log", async () => {
+    const token = await tokenFor(USER);
+    const consoleInfoSpy = vi.spyOn(console, "info").mockImplementation(() => {});
+
+    h.user.findUnique.mockImplementation(({ where, select, include }: any) => {
+      if (select?.sessions) {
+        return Promise.resolve({ id: `auth_${where.stellarAddress}`, sessions: [] });
+      }
+      if (include) {
+        return Promise.resolve({
+          id: "user-123",
+          stellarAddress: USER,
+          displayName: "Alice Developer",
+          email: "alice@example.com",
+          bio: "Fullstack Rust and React dev",
+          notifyOnDispute: true,
+          notifyOnRelease: false,
+          notifyOnRefund: true,
+          createdAt: new Date("2026-01-01T00:00:00.000Z"),
+          jobsAsClient: [
+            { id: "job-1", title: "Smart Contract Audit", milestones: [] },
+          ],
+          jobsAsFreelancer: [],
+          proposals: [
+            { id: "prop-1", coverLetter: "High quality work", proposedRate: "1000", job: { id: "job-2", title: "Frontend Build" } },
+          ],
+          uploadedDeliverables: [
+            { id: "deliv-1", fileName: "deliverable.zip", fileUrl: "https://storage/deliv.zip" },
+          ],
+          ratingsGiven: [],
+          ratingsReceived: [
+            { id: "rate-1", score: 5, comment: "Exceptional speed" },
+          ],
+          savedJobs: [
+            { id: "saved-1", job: { id: "job-3", title: "Backend API" } },
+          ],
+          notifications: [
+            { id: "notif-1", title: "Milestone Released", message: "Client released funds" },
+          ],
+          messagesSent: [
+            { id: "msg-1", body: "Hello client!" },
+          ],
+        });
+      }
+      return Promise.resolve({ id: "user-123", stellarAddress: USER });
+    });
+
+    h.message.findMany.mockResolvedValue([
+      { id: "msg-1", body: "Hello client!", sender: { stellarAddress: USER, displayName: "Alice" } },
+    ]);
+
+    const res = await fetch(`${baseUrl}/api/users/me/export`, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+
+    expect(res.status).toBe(200);
+    const json = (await res.json()) as any;
+
+    expect(json.exportedAt).toBeDefined();
+    expect(json.profile.stellarAddress).toBe(USER);
+    expect(json.profile.displayName).toBe("Alice Developer");
+    expect(json.profile.email).toBe("alice@example.com");
+    expect(json.jobs.asClient).toHaveLength(1);
+    expect(json.proposals).toHaveLength(1);
+    expect(json.deliverables).toHaveLength(1);
+    expect(json.ratings.received).toHaveLength(1);
+    expect(json.messages).toHaveLength(1);
+    expect(json.savedJobs).toHaveLength(1);
+    expect(json.notifications).toHaveLength(1);
+
+    expect(consoleInfoSpy).toHaveBeenCalledWith(
+      expect.stringContaining(`[audit] GDPR data export executed for user ${USER}`),
+    );
+    consoleInfoSpy.mockRestore();
+  });
+});
+
+describe("DELETE /api/users/me (Issue #310)", () => {
+  it("rejects unauthenticated requests with 401", async () => {
+    const res = await fetch(`${baseUrl}/api/users/me`, { method: "DELETE" });
+    expect(res.status).toBe(401);
+  });
+
+  it("redacts user personal information, deletes unassociated drafts, and leaves on-chain history intact", async () => {
+    const token = await tokenFor(USER);
+    const consoleInfoSpy = vi.spyOn(console, "info").mockImplementation(() => {});
+
+    h.user.findUnique.mockImplementation(({ where, select }: any) => {
+      if (select?.sessions) {
+        return Promise.resolve({ id: `auth_${where.stellarAddress}`, sessions: [] });
+      }
+      return Promise.resolve({ id: "user-123", stellarAddress: USER });
+    });
+
+    h.job.findMany.mockResolvedValue([
+      { id: "draft-job-1" },
+      { id: "draft-job-2" },
+    ]);
+
+    const res = await fetch(`${baseUrl}/api/users/me`, {
+      method: "DELETE",
+      headers: { Authorization: `Bearer ${token}` },
+    });
+
+    expect(res.status).toBe(200);
+    const json = (await res.json()) as any;
+    expect(json.redacted).toBe(true);
+    expect(json.stellarAddress).toBe(USER);
+
+    // Assert PII redaction on user record
+    expect(h.user.update).toHaveBeenCalledWith({
+      where: { id: "user-123" },
+      data: {
+        displayName: null,
+        email: null,
+        bio: null,
+        notifyOnDispute: false,
+        notifyOnRelease: false,
+        notifyOnRefund: false,
+      },
+    });
+
+    // Assert deletion of unassociated off-chain drafts and personal data
+    expect(h.savedJob.deleteMany).toHaveBeenCalledWith({ where: { userId: "user-123" } });
+    expect(h.notification.deleteMany).toHaveBeenCalledWith({ where: { userId: "user-123" } });
+    expect(h.userSession.deleteMany).toHaveBeenCalledWith({ where: { userId: "user-123" } });
+
+    expect(h.job.findMany).toHaveBeenCalledWith({
+      where: {
+        clientId: "user-123",
+        escrowId: null,
+        freelancerId: null,
+        status: "CREATED",
+      },
+      select: { id: true },
+    });
+    expect(h.milestone.deleteMany).toHaveBeenCalledWith({
+      where: { jobId: { in: ["draft-job-1", "draft-job-2"] } },
+    });
+    expect(h.job.deleteMany).toHaveBeenCalledWith({
+      where: { id: { in: ["draft-job-1", "draft-job-2"] } },
+    });
+
+    // Assert audit logging
+    expect(consoleInfoSpy).toHaveBeenCalledWith(
+      expect.stringContaining(`[audit] GDPR account erasure executed for user ${USER}`),
+    );
+    consoleInfoSpy.mockRestore();
   });
 });

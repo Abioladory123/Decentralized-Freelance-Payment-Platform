@@ -267,6 +267,56 @@ registry.registerPath({
 });
 
 registry.registerPath({
+  method: "get",
+  path: "/api/users/me/export",
+  tags: ["Users"],
+  summary: "Export personal data archive (GDPR / CCPA)",
+  description:
+    "Returns a structured JSON export of all personal profile information, proposals, deliverables metadata, ratings, and chat history.",
+  security: auth,
+  responses: {
+    200: json(
+      z.object({
+        exportedAt: z.string().datetime(),
+        profile: z.record(z.unknown()),
+        jobs: z.record(z.unknown()),
+        proposals: z.array(z.unknown()),
+        messages: z.array(z.unknown()),
+        deliverables: z.array(z.unknown()),
+        ratings: z.record(z.unknown()),
+        savedJobs: z.array(z.unknown()),
+        notifications: z.array(z.unknown()),
+      }),
+      "The user's personal data export archive",
+    ),
+    401: errors[401],
+    404: errors[404],
+  },
+});
+
+registry.registerPath({
+  method: "delete",
+  path: "/api/users/me",
+  tags: ["Users"],
+  summary: "Erase account and redact personal data (GDPR / CCPA)",
+  description:
+    "Redacts personal identifiable information (email, displayName, bio) and deletes unassociated off-chain drafts and personal alerts, while preserving on-chain escrow integrity.",
+  security: auth,
+  responses: {
+    200: json(
+      z.object({
+        message: z.string(),
+        stellarAddress: z.string(),
+        redacted: z.boolean(),
+      }),
+      "Account data erased and personal details redacted",
+    ),
+    401: errors[401],
+    404: errors[404],
+  },
+});
+
+registry.registerPath({
   method: "post",
   path: "/api/users/logout",
   tags: ["Users"],
