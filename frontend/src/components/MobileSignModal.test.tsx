@@ -44,7 +44,8 @@ describe("MobileSignModal (issue #312)", () => {
   });
 
   it("polls for transaction confirmation and triggers onConfirmed on success", async () => {
-    let resolvePoll: (val: unknown) => void = () => {};
+    type PollResult = Awaited<ReturnType<typeof stellar.pollTransaction>>;
+    let resolvePoll: (val: PollResult) => void = () => {};
     vi.mocked(stellar.pollTransaction).mockImplementation(
       () => new Promise((resolve) => (resolvePoll = resolve)),
     );
@@ -63,7 +64,7 @@ describe("MobileSignModal (issue #312)", () => {
     expect(screen.getByText(/Waiting for mobile wallet signature/i)).toBeTruthy();
 
     act(() => {
-      resolvePoll({ status: "SUCCESS" });
+      resolvePoll({ status: "SUCCESS" } as PollResult);
     });
 
     await waitFor(() => {

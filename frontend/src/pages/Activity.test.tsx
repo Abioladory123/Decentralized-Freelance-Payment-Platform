@@ -71,14 +71,14 @@ describe("Activity without a wallet", () => {
   it("asks the visitor to connect instead of reading the API", () => {
     render(<Activity />);
 
-    expect(screen.getByRole("button", { name: "Connect your Freighter wallet" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Connect your wallet" })).toBeTruthy();
     expect(h.fetchJobs).not.toHaveBeenCalled();
   });
 
   it("connects on request", async () => {
     render(<Activity />);
 
-    fireEvent.click(screen.getByRole("button", { name: "Connect your Freighter wallet" }));
+    fireEvent.click(screen.getByRole("button", { name: "Connect your wallet" }));
 
     await waitFor(() => expect(h.wallet.connect).toHaveBeenCalled());
   });
@@ -132,7 +132,7 @@ describe("Activity reads", () => {
     rerender(<Activity />);
 
     expect(h.fetchJobs).toHaveBeenCalledTimes(2);
-    expect(screen.getByRole("button", { name: "Connect your Freighter wallet" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Connect your wallet" })).toBeTruthy();
   });
 });
 

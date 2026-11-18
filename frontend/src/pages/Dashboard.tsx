@@ -221,7 +221,7 @@ export default function Dashboard() {
       {!publicKey ? (
         <p>
           <button onClick={() => void connect()} disabled={connecting}>
-            {connecting ? "Connecting…" : "Connect your Freighter wallet"}
+            {connecting ? "Connecting…" : "Connect your wallet"}
           </button>{" "}
           to post or manage jobs.
         </p>

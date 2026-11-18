@@ -74,7 +74,7 @@ Honest snapshot of what works today (see [`docs/TESTNET.md`](./docs/TESTNET.md) 
 | Backend tests | ✅ 138 tests |
 | Frontend tests | ✅ 156 tests (Vitest + Testing Library) — pages, components and lib helpers |
 | Testnet deployment | ✅ Deployed and initialized (ids in [`deployments/testnet.json`](./deployments/testnet.json)) |
-| Frontend | 🟡 Functional MVP — connect Freighter, create/fund a job, release milestones, view status, open a dispute, rate the counterparty, read reputation, browse a profile's job history and ratings, export an escrow receipt |
+| Frontend | 🟡 Functional MVP — connect Freighter or LOBSTR, create/fund a job, release milestones, view status, open a dispute, rate the counterparty, read reputation, browse a profile's job history and ratings, export an escrow receipt |
 | Backend API | ✅ Routes + auth implemented; contract-event indexer syncs DB state from Soroban RPC, with a dead-letter table for events it cannot apply |
 | Job discovery / filtering | ✅ Dashboard lists jobs with status + skill-tag filters and pagination (from the backend API) |
 | Multi-arbitrator / timelocked disputes | ✅ Panel with a timelock escape hatch from `Disputed` (see [`docs/DISPUTES.md`](./docs/DISPUTES.md)) |
@@ -249,7 +249,10 @@ missing from the spec.
 
 ## Frontend
 
-React + TypeScript + Vite, with Freighter for signing.
+React + TypeScript + Vite. Connecting opens a wallet picker with Freighter and
+LOBSTR adapters (`frontend/src/lib/wallets.ts`); both sign transactions and
+SEP-53 messages, and adding another provider only means implementing the
+adapter interface.
 
 | Route | Page | Purpose |
 |-------|------|---------|
@@ -315,7 +318,7 @@ browser).
 |-------|--------|
 | Smart contracts | Rust (edition 2021) + Soroban SDK **29.0.0**, compiled to Wasm for `wasm32v1-none` |
 | Frontend | React 18 + TypeScript + Vite 5, React Router 6, Vitest + Testing Library |
-| Wallet | Freighter browser extension (SEP-53 message signing) |
+| Wallets | Freighter and LOBSTR browser extensions (SEP-53 message signing), selectable from an in-app picker |
 | Backend | Express 4 + Prisma 5 + PostgreSQL, Zod validation, JWT (`jose`), Helmet, rate limiting |
 | Chain access | `@stellar/stellar-sdk` 12 (Soroban RPC + Horizon) |
 | CI | GitHub Actions — contracts (fmt, clippy, test, wasm build), frontend, backend (typecheck, tests, and Prisma migrations applied against a Postgres service), dependency vulnerability scan (advisory; `npm audit` + `cargo audit`) |

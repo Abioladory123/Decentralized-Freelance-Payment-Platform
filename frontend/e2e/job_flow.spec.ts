@@ -1,10 +1,24 @@
-import { test, expect } from "@playwright/test";
+import { test, expect, type Page } from "@playwright/test";
 import {
   injectMockFreighter,
   switchFreighterAccount,
   TEST_CLIENT_KEY,
   TEST_FREELANCER_KEY,
 } from "./fixtures/mockFreighter";
+
+/**
+ * Click a connect button to open the wallet picker, then choose the mocked
+ * Freighter wallet. Every page has its own connect prompt, so the trigger is
+ * a parameter.
+ */
+async function connectFreighter(
+  page: Page,
+  trigger: RegExp = /Connect (Wallet|a wallet|your wallet)/i,
+): Promise<void> {
+  await page.getByRole("button", { name: trigger }).first().click();
+  await page.getByRole("button", { name: "Connect Freighter" }).click();
+  await expect(page.getByRole("button", { name: "Disconnect" })).toBeVisible();
+}
 
 test.describe("Stellar Freelance Platform End-to-End User Journey", () => {
   test.beforeEach(async ({ page }) => {
@@ -133,19 +147,20 @@ test.describe("Stellar Freelance Platform End-to-End User Journey", () => {
   }) => {
     await page.goto("/");
 
-    // Find the Connect Freighter button
-    const connectButton = page.getByRole("button", { name: /Connect Freighter/i });
+    // The navbar offers a generic connect button that opens the wallet picker.
+    const connectButton = page.getByRole("button", { name: "Connect Wallet" });
     await expect(connectButton).toBeVisible();
 
-    // Click connect
+    // Choose Freighter in the picker.
     await connectButton.click();
+    await page.getByRole("button", { name: "Connect Freighter" }).click();
 
     // After connecting, verify the wallet badge appears and Disconnect button is present
     await expect(page.getByRole("button", { name: "Disconnect" })).toBeVisible();
 
     // Click disconnect and verify return to connect state
     await page.getByRole("button", { name: "Disconnect" }).click();
-    await expect(page.getByRole("button", { name: /Connect Freighter/i })).toBeVisible();
+    await expect(page.getByRole("button", { name: "Connect Wallet" })).toBeVisible();
   });
 
   test("Step 3: Account Switching - simulates wallet switching between client and freelancer accounts", async ({
@@ -154,16 +169,14 @@ test.describe("Stellar Freelance Platform End-to-End User Journey", () => {
     await page.goto("/");
 
     // Connect initial account (Client)
-    await page.getByRole("button", { name: /Connect Freighter/i }).click();
-    await expect(page.getByRole("button", { name: "Disconnect" })).toBeVisible();
+    await connectFreighter(page);
 
     // Switch account in the mock Freighter extension to Freelancer
     await switchFreighterAccount(page, TEST_FREELANCER_KEY);
 
     // Re-connect to read switched address
     await page.getByRole("button", { name: "Disconnect" }).click();
-    await page.getByRole("button", { name: /Connect Freighter/i }).click();
-    await expect(page.getByRole("button", { name: "Disconnect" })).toBeVisible();
+    await connectFreighter(page);
   });
 
   test("Step 4: Post Job - navigates to /post and fills in job parameters", async ({
@@ -204,9 +217,10 @@ test.describe("Stellar Freelance Platform End-to-End User Journey", () => {
     await expect(page).toHaveURL(/\/jobs\/1$/);
 
     // Connect wallet to interact with conversation
-    const connectBtn = page.getByRole("button", { name: /Connect Freighter/i });
+    const connectBtn = page.getByRole("button", { name: /Connect a wallet/i });
     if (await connectBtn.isVisible()) {
       await connectBtn.click();
+      await page.getByRole("button", { name: "Connect Freighter" }).click();
     }
 
     // Verify page container is visible

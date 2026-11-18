@@ -40,10 +40,21 @@ const builtTxs = vi.hoisted(() => [] as unknown[]);
 const h = vi.hoisted(() => ({
   job: { update: vi.fn(), findUnique: vi.fn() },
   user: { findUnique: vi.fn() },
+  milestone: { deleteMany: vi.fn(), createMany: vi.fn() },
+  deliverable: { count: vi.fn() },
   buildCreateArgs: vi.fn(),
 }));
 
-vi.mock("../db", () => ({ prisma: { job: h.job, user: h.user } }));
+vi.mock("../db", () => ({
+  prisma: {
+    job: h.job,
+    user: h.user,
+    milestone: h.milestone,
+    deliverable: h.deliverable,
+    $transaction: (fn: (tx: unknown) => unknown) =>
+      fn({ milestone: h.milestone, job: h.job, deliverable: h.deliverable }),
+  },
+}));
 
 vi.mock("../lib/escrowArgs", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../lib/escrowArgs")>();
@@ -119,6 +130,9 @@ beforeEach(() => {
   h.job.update.mockReset();
   h.job.findUnique.mockReset();
   h.user.findUnique.mockReset();
+  h.milestone.deleteMany.mockReset();
+  h.milestone.createMany.mockReset();
+  h.deliverable.count.mockReset();
   h.buildCreateArgs.mockReset();
   // `requireAuth` loads the caller's current session before the request handler.
   h.user.findUnique.mockResolvedValue({ id: "auth_user", sessions: [] });
@@ -135,6 +149,18 @@ async function tokenFor(address: string): Promise<string> {
 async function post(path: string, body: unknown = {}) {
   const res = await fetch(`${baseUrl}/api/escrow${path}`, {
     method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${await tokenFor(CLIENT)}`,
+    },
+    body: JSON.stringify(body),
+  });
+  return { status: res.status, body: (await res.json()) as Record<string, unknown> };
+}
+
+async function put(path: string, body: unknown = {}) {
+  const res = await fetch(`${baseUrl}/api/escrow${path}`, {
+    method: "PUT",
     headers: {
       "Content-Type": "application/json",
       Authorization: `Bearer ${await tokenFor(CLIENT)}`,
@@ -275,5 +301,83 @@ describe("POST /api/escrow/sync/:jobId — escrowId validation", () => {
 
     expect(synced).toBe(indexed);
     expect(synced).toBe("ACTIVE");
+  });
+});
+
+describe("Milestone updates deliverable preservation (issue #270)", () => {
+  it("rejects PUT /:escrowId/milestones with 400 when attached deliverables exist", async () => {
+    h.job.findUnique.mockResolvedValue({
+      id: "job_1",
+      escrowId: 10n,
+      asset: "XLM",
+      client: { stellarAddress: CLIENT },
+      milestones: [
+        {
+          id: "m_1",
+          index: 0,
+          deliverables: [{ id: "d_1", fileName: "design.png" }],
+        },
+      ],
+    });
+
+    const res = await put("/10/milestones", {
+      milestones: [{ amount: 100 }],
+    });
+
+    expect(res.status).toBe(400);
+    expect(String(res.body.error)).toMatch(/deliverables/i);
+    expect(h.milestone.deleteMany).not.toHaveBeenCalled();
+  });
+
+  it("rejects POST /build/update-milestones with 400 when attached deliverables exist", async () => {
+    h.job.findUnique.mockResolvedValue({
+      id: "job_1",
+      escrowId: 10n,
+      asset: "XLM",
+      client: { stellarAddress: CLIENT },
+      milestones: [
+        {
+          id: "m_1",
+          index: 0,
+          deliverables: [{ id: "d_1", fileName: "design.png" }],
+        },
+      ],
+    });
+
+    const res = await post("/build/update-milestones", {
+      escrowId: 10,
+      milestones: [{ amount: 100 }],
+    });
+
+    expect(res.status).toBe(400);
+    expect(String(res.body.error)).toMatch(/deliverables/i);
+  });
+
+  it("allows PUT /:escrowId/milestones when no deliverables are attached", async () => {
+    h.job.findUnique.mockResolvedValue({
+      id: "job_1",
+      escrowId: 10n,
+      asset: "XLM",
+      client: { stellarAddress: CLIENT },
+      milestones: [
+        {
+          id: "m_1",
+          index: 0,
+          deliverables: [],
+        },
+      ],
+    });
+    h.job.update.mockResolvedValue({
+      id: "job_1",
+      totalAmount: "100",
+      milestones: [{ index: 0, amount: "100" }],
+    });
+
+    const res = await put("/10/milestones", {
+      milestones: [{ amount: 100 }],
+    });
+
+    expect(res.status).toBe(200);
+    expect(h.milestone.deleteMany).toHaveBeenCalledWith({ where: { jobId: "job_1" } });
   });
 });

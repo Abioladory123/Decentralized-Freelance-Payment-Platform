@@ -48,6 +48,10 @@ const schema = z.object({
   // DATABASE_TIMEOUT_MS controls query statement_timeout in ms and pool_timeout (default: 10_000).
   DATABASE_POOL_SIZE: z.coerce.number().int().positive().default(10),
   DATABASE_TIMEOUT_MS: z.coerce.number().int().positive().default(10_000),
+  // Prometheus metrics auth (issue #305).
+  METRICS_USER: z.string().default(""),
+  METRICS_PASSWORD: z.string().default(""),
+  METRICS_TOKEN: z.string().default(""),
 });
 
 const parsed = schema.safeParse(process.env);

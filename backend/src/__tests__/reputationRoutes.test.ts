@@ -198,6 +198,31 @@ describe("POST /api/reputation — duplicate rating handling", () => {
     expect(String(res.body.error)).toMatch(/already rated/i);
   });
 
+  it("handles simultaneous concurrent submissions gracefully with 409 conflict for the second request", async () => {
+    h.rating.findUnique.mockResolvedValue(null);
+    let firstCall = true;
+    h.rating.create.mockImplementation(() => {
+      if (firstCall) {
+        firstCall = false;
+        return Promise.resolve({ id: "rating_1", score: 4 });
+      }
+      return Promise.reject(
+        new Prisma.PrismaClientKnownRequestError(
+          "Unique constraint failed on the fields: (`raterId`,`jobId`)",
+          { code: "P2002", clientVersion: "5.0.0", meta: {} },
+        ),
+      );
+    });
+
+    const [res1, res2] = await Promise.all([
+      postRating({ jobId: "job_1", rateeAddress: RATEE, score: 4 }),
+      postRating({ jobId: "job_1", rateeAddress: RATEE, score: 4 }),
+    ]);
+
+    const statuses = [res1.status, res2.status].sort();
+    expect(statuses).toEqual([201, 409]);
+  });
+
   it("lets the freelancer rate the client (the other direction)", async () => {
     h.rating.findUnique.mockResolvedValue(null);
     h.rating.create.mockResolvedValue({ id: "rating_2", score: 5 });

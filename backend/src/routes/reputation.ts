@@ -106,7 +106,10 @@ reputationRouter.post("/", requireAuth, validate(submitSchema), async (req, res,
       // A concurrent duplicate-submit can still hit the unique constraint after
       // the `findUnique` guard above (race condition). Map it to 409 rather than
       // letting it bubble as a 500.
-      if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === "P2002") {
+      if (
+        (err instanceof Prisma.PrismaClientKnownRequestError && err.code === "P2002") ||
+        (err && typeof err === "object" && (err as { code?: string }).code === "P2002")
+      ) {
         throw new AppError(409, "You have already rated this job.");
       }
       throw err;

@@ -603,6 +603,57 @@ svg {
   font-variant-numeric: tabular-nums;
 }
 
+/* --- Wallet picker (issue #79) ------------------------------------------ */
+
+.modal-backdrop {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 1rem;
+  background: rgba(15, 23, 42, 0.45);
+  z-index: 10;
+}
+
+.modal {
+  width: 100%;
+  max-width: 420px;
+  max-height: calc(100vh - 2rem);
+  overflow-y: auto;
+}
+
+.modal-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+}
+
+.modal-header h2 {
+  margin: 0;
+  font-size: 1.15rem;
+}
+
+.wallet-list {
+  list-style: none;
+  padding: 0;
+  margin: 1rem 0;
+}
+
+.wallet-list li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 0.65rem 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.wallet-list li:last-child {
+  border-bottom: none;
+}
+
 /* --- Fiat estimates (issue #76) ----------------------------------------- */
 
 /* Sits beside an amount without competing with it: smaller, muted, never bold. */
