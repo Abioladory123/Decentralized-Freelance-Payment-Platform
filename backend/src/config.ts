@@ -43,6 +43,11 @@ const schema = z.object({
   INDEXER_LAG_ALERT_THRESHOLD: z.coerce.number().int().positive().default(1000),
   // Maximum unhandled dead-letter rows before alerting.
   DEAD_LETTER_ALERT_THRESHOLD: z.coerce.number().int().positive().default(10),
+  // Optional HTTP auth for the Prometheus /metrics endpoint (issue #305).
+  // Unset means the endpoint is open; the route is normally not public.
+  METRICS_USER: z.string().optional(),
+  METRICS_PASSWORD: z.string().optional(),
+  METRICS_TOKEN: z.string().optional(),
   // Prisma connection pool settings (issue #275).
   // DATABASE_POOL_SIZE controls connection_limit (default: 10 in containerized/production setups).
   // DATABASE_TIMEOUT_MS controls query statement_timeout in ms and pool_timeout (default: 10_000).
