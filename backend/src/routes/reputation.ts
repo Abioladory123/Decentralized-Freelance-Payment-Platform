@@ -16,6 +16,7 @@ import { isValidStellarAddress } from "../lib/stellarAddress";
 import { REPUTATION_ERROR_MESSAGES } from "../lib/contractErrors";
 import { buildTx } from "../lib/soroban";
 import { computeWeightedAggregate } from "../lib/reputation";
+import { invalidateFreelancerDirectory } from "../lib/cache";
 import { prisma } from "../db";
 import { requireAuth } from "../middleware/auth";
 import { validate } from "../middleware/validate";
@@ -113,6 +114,11 @@ reputationRouter.post("/", requireAuth, validate(submitSchema), async (req, res,
       }
       throw err;
     }
+
+    // The directory sorts and displays on the rating rows, so its cached pages
+    // are stale the moment this one is written. The indexer's `rated` event
+    // invalidates them too, but that arrives after the transaction lands.
+    invalidateFreelancerDirectory();
 
     res.status(201).json({ rating, xdr });
   } catch (err) {

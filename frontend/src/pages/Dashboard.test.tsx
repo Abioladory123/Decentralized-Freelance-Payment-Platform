@@ -465,6 +465,38 @@ describe("Dashboard job list", () => {
     expect(signal.aborted).toBe(true);
   });
 
+  it("debounces rapid search typing into one request (#291)", async () => {
+    render(<Dashboard />);
+    await screen.findByText("No jobs found.");
+
+    const callsBeforeTyping = h.fetchJobs.mock.calls.length;
+    const input = screen.getByLabelText(/Search jobs/);
+
+    fireEvent.change(input, { target: { value: "r" } });
+    fireEvent.change(input, { target: { value: "re" } });
+    fireEvent.change(input, { target: { value: "redesign" } });
+
+    // Nothing is fetched until the input has been quiet for 300ms.
+    expect(h.fetchJobs).toHaveBeenCalledTimes(callsBeforeTyping);
+
+    await waitFor(
+      () =>
+        expect(lastQuery()).toEqual({
+          status: undefined,
+          page: 1,
+          limit: 10,
+          q: "redesign",
+        }),
+      { timeout: 1_500 },
+    );
+
+    // The three keystrokes produced exactly one searched request.
+    const searched = h.fetchJobs.mock.calls.filter(
+      ([query]) => (query as { q?: string }).q !== undefined,
+    );
+    expect(searched).toHaveLength(1);
+  });
+
   it("filters jobs by search query and sort option", async () => {
     render(<Dashboard />);
     await screen.findByText("No jobs found.");

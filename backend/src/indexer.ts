@@ -68,6 +68,7 @@ import {
   notifyEscrowRefunded,
   maskAddresses,
 } from "./lib/notifications";
+import { invalidateFreelancerDirectory } from "./lib/cache";
 import { dispatchWebhooksForEvent } from "./lib/webhooks";
 import { checkIndexerLagAlert } from "./lib/alerts";
 
@@ -101,7 +102,39 @@ const CONTRACT_IDS = [
 /** The contracts the indexer is expected to follow, for a partial-config check. */
 const INDEXED_CONTRACTS: ContractIdName[] = ["escrow", "dispute", "reputation"];
 
+/**
+ * One `getEvents` filter covering every contract the indexer follows.
+ *
+ * The RPC accepts several filters per request, but they are OR-ed and each one
+ * counts against the node's per-request filter cap. Emitting one filter per
+ * contract turned a single logical poll into a fan-out that grew with every
+ * contract added (and would eventually hit that cap), while one filter with all
+ * contract ids keeps the poll to one request — the lowest number of RPC round
+ * trips for a three-contract deployment (issue #292).
+ *
+ * Duplicates are removed because a repeated id adds no events, only a longer
+ * filter, and an empty list returns no filter at all so callers can skip the
+ * request entirely.
+ */
+export function buildEventFilters(contractIds: readonly string[]): SorobanRpc.Api.EventFilter[] {
+  const unique = [...new Set(contractIds.filter((id) => id.length > 0))];
+  return unique.length > 0 ? [{ type: "contract", contractIds: unique }] : [];
+}
+
 const rpcServer = new SorobanRpc.Server(config.SOROBAN_RPC_URL, { allowHttp: false });
+
+/**
+ * The most recent chain tip seen in a `getEvents` response.
+ *
+ * `resolveStartLedger` only needs a tip to keep `startLedger` inside the RPC's
+ * retention window, and every event response already reports the tip it was
+ * observed at. Re-asking with `getLatestLedger` on every poll doubles the RPC
+ * requests per tick for a value the previous response just supplied; this
+ * caches it and falls back to `getLatestLedger` only for the first poll after a
+ * start (or restart), when there is no event response yet. A tip one interval
+ * old is always sufficient: the cursor advances from the same response.
+ */
+let cachedChainTip: number | null = null;
 
 /** Minimal surface of `SorobanRpc.Server` the indexer needs (for testing). */
 export interface SorobanEventSource {
@@ -143,6 +176,10 @@ export interface IndexerStore {
 }
 
 export function startIndexer() {
+  // A new indexer instance must not trust a tip cached by a previous run: the
+  // chain may have advanced while this process was not the one polling.
+  cachedChainTip = null;
+
   // Contract ids change on every deploy, so compare the configured ones with
   // the last deploy record before doing anything else. Stale-but-non-empty ids
   // used to leave the indexer polling the superseded contracts with no warning
@@ -211,14 +248,29 @@ async function poll() {
     };
 
     const source: SorobanEventSource = {
-      getEvents: (request) => rpcServer.getEvents(request),
-      getLatestLedger: async () => (await rpcServer.getLatestLedger()).sequence,
+      getEvents: async (request) => {
+        const response = await rpcServer.getEvents(request);
+        cachedChainTip = Math.max(cachedChainTip ?? 0, response.latestLedger);
+        return response;
+      },
+      getLatestLedger: async () => {
+        if (cachedChainTip !== null) return cachedChainTip;
+        cachedChainTip = (await rpcServer.getLatestLedger()).sequence;
+        return cachedChainTip;
+      },
     };
 
     await processContractEvents(source, cursor, CONTRACT_IDS);
 
     try {
-      await checkIndexerLagAlert({ rpcServer });
+      // The event response just reported the chain tip at this poll, so the lag
+      // check reads it from there instead of spending a second RPC request on
+      // `getLatestLedger` (issue #292). The fallback keeps the check working if
+      // no event response was produced.
+      await checkIndexerLagAlert({
+        latestLedger: cachedChainTip ?? undefined,
+        rpcServer,
+      });
     } catch (alertErr) {
       console.error("[indexer] Alert check error:", alertErr);
     }
@@ -286,10 +338,10 @@ export async function processContractEvents(
   const lastLedger = await cursor.get();
   if (contractIds.length === 0) return lastLedger;
 
-  const filters = contractIds.map((contractId) => ({
-    type: "contract" as const,
-    contractIds: [contractId],
-  }));
+  // One filter, one request: the RPC ORs the contract ids inside it, so the
+  // escrow, dispute and reputation streams arrive in the same batch response.
+  const filters = buildEventFilters(contractIds);
+  if (filters.length === 0) return lastLedger;
 
   let currentStartLedger: number | undefined = await resolveStartLedger(source, lastLedger);
   let currentCursor: string | undefined = undefined;
@@ -1166,6 +1218,10 @@ export async function applyRatedEvent(
     // On-chain score wins; keep any comment the API stored.
     update: { rateeId: ratee.id, score: event.score },
   });
+
+  // The public directory aggregates these rows, so cached pages would keep the
+  // previous score until the TTL expired (issue #290).
+  invalidateFreelancerDirectory();
 
   return { status: "applied", jobId: job.id, score: event.score };
 }

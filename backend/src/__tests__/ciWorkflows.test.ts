@@ -104,6 +104,34 @@ describe("GitHub Actions pinning (issue #111)", () => {
   });
 });
 
+describe("Docker layer cache (issue #289)", () => {
+  it("builds both images with buildx and the GitHub Actions cache", () => {
+    const ci = workflows().find((workflow) => workflow.name === "ci.yml");
+    if (!ci) throw new Error("ci.yml not found");
+    const text = ci.lines.join("\n");
+
+    // buildx is what makes `cache-to: type=gha` work; the default builder
+    // cannot export to the Actions cache backend.
+    expect(text).toMatch(/uses:\s*docker\/setup-buildx-action@[0-9a-f]{40}\s+#/);
+    expect(text.match(/uses:\s*docker\/build-push-action@[0-9a-f]{40}\s+#/g)).toHaveLength(2);
+
+    // One cache scope per image: shared scopes would make the backend and
+    // frontend evict each other's layers.
+    const scopes = (pattern: RegExp) =>
+      [...text.matchAll(pattern)].map((match) => match[1]).sort();
+    expect(scopes(/cache-from:\s*type=gha,scope=([a-z]+)/g)).toEqual([
+      "backend",
+      "frontend",
+    ]);
+    // `mode=max` caches intermediate layers too — without it only the final
+    // image is reused and `npm ci` is rebuilt on every run.
+    expect(scopes(/cache-to:\s*type=gha,mode=max,scope=([a-z]+)/g)).toEqual([
+      "backend",
+      "frontend",
+    ]);
+  });
+});
+
 describe("workflow token scope (issue #111)", () => {
   it("declares a workflow-level `permissions:` block granting `contents: read` in every workflow", () => {
     const offenders: string[] = [];
