@@ -72,6 +72,9 @@ import { invalidateFreelancerDirectory } from "./lib/cache";
 import { dispatchWebhooksForEvent } from "./lib/webhooks";
 import { checkIndexerLagAlert } from "./lib/alerts";
 
+/** Re-exported for callers (and tests) that work with raw contract events. */
+export type { ContractEventLike } from "./lib/events";
+
 const CURSOR_ID = "main";
 export const EVENT_PAGE_LIMIT = 100;
 
