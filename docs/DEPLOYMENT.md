@@ -372,3 +372,85 @@ The containerised frontend image uses nginx as a reverse proxy for `/api/` traff
 - In the browser, API calls made to `/api/*` on port 5173 hit nginx on container port 8080, which reverse-proxies them directly to `http://backend:3000`.
 - In local development (`npm run dev`), Vite's dev server proxy similarly forwards `/api` to `http://localhost:3000`.
 - For external or custom deployments where the frontend and backend are hosted on separate domains, `VITE_API_URL` can be set to an absolute backend URL at build time.
+
+---
+
+## 5. Database Maintenance & Historical Archiving
+
+As platform volume scales, operational tables (`Job`, `Milestone`, `Deliverable`, `Message`, `ChainEvent`, and `Proposal`) grow continuously. Unpruned historical records lead to PostgreSQL B-tree index bloat, increased buffer cache churn, and degraded performance for queries filtering live, active jobs (issue #272).
+
+### Archiving Schema & Cold Storage (`ArchivedJob`)
+
+Completed and refunded jobs past their operational retention window (default: 365 days) are moved to cold archive storage (`ArchivedJob` model). 
+
+Each archive entry captures a full relational JSON snapshot (`archiveData`) containing:
+- Root job attributes, client and freelancer IDs, asset, and total amount.
+- Milestones with original amounts, descriptions, and release progress.
+- Attached deliverables and off-chain file records.
+- Participant communication history (`Message` records).
+- Submitted freelancer proposals and proposed rates.
+- Arbitrated dispute records and approved settlement shares.
+- Mutual reputation ratings and scores.
+- Associated on-chain transaction hashes and event logs (`ChainEvent`).
+
+### Archival CLI Script (`scripts/archive_historical_jobs.ts`)
+
+The maintenance CLI script scans for jobs with terminal statuses (`COMPLETED`, `REFUNDED`) whose `updatedAt` exceeds the retention cutoff date.
+
+```bash
+# Preview eligible jobs older than 365 days without making database changes
+npx --prefix backend tsx ../scripts/archive_historical_jobs.ts --dry-run
+
+# Archive completed/refunded jobs older than 180 days in batches of 100, saving JSON files to disk
+npx --prefix backend tsx ../scripts/archive_historical_jobs.ts \
+  --retention-days 180 \
+  --batch-size 100 \
+  --export-dir ./archives/2026
+```
+
+#### Foreign Key Pruning Order
+
+PostgreSQL enforces relational foreign key constraints across jobs and dependent entities. To prevent foreign key constraint violations during deletion, each archived job is processed in an isolated transaction executing cascade deletions in the following strict dependency order:
+
+1. `Deliverable` records (attached to milestone IDs)
+2. `Milestone` records (attached to `jobId`)
+3. `Message` records (conversation between participants)
+4. `Proposal` records (submitted applications)
+5. `Dispute` records (arbitration cases)
+6. `Rating` records (job reputation feedback)
+7. `SavedJob` records (bookmarks)
+8. `Notification` records (job-specific alert records)
+9. Root `Job` record
+
+### Scheduled Archiving (Cron Job)
+
+In production container environments (Render/Railway/VPS), run the archival script as a recurring cron job (e.g., weekly at 02:00 UTC on Sundays):
+
+```cron
+0 2 * * 0 cd /app && npx --prefix backend tsx ../scripts/archive_historical_jobs.ts --retention-days 365 --batch-size 250 >> /var/log/job-archiving.log 2>&1
+```
+
+### High-Volume Partitioning Strategy (`ChainEvent` & `Message`)
+
+For large enterprise deployments processing millions of events per month, operational tables with monotonic chronological keys (`ChainEvent` by `ledger`/`createdAt` and `Message` by `createdAt`) should be partitioned using native PostgreSQL declarative range partitioning:
+
+```sql
+-- Example monthly partitioning strategy for ChainEvent
+CREATE TABLE "ChainEvent_Partitioned" (
+    "id" TEXT NOT NULL,
+    "escrowId" BIGINT NOT NULL,
+    "action" TEXT NOT NULL,
+    "amount" DECIMAL(36, 18),
+    "txHash" TEXT,
+    "ledger" INT NOT NULL,
+    "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT "ChainEvent_pkey" PRIMARY KEY ("id", "createdAt")
+) PARTITION BY RANGE ("createdAt");
+
+-- Monthly partition instances
+CREATE TABLE "ChainEvent_2026_01" PARTITION OF "ChainEvent_Partitioned"
+    FOR VALUES FROM ('2026-01-01 00:00:00') TO ('2026-02-01 00:00:00');
+```
+
+Partition pruning allows operational queries to scan only active monthly partitions, while old partitions can be detached and archived into cold object storage (S3/GCS) without locking the active table.
+

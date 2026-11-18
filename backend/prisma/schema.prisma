@@ -399,6 +399,7 @@ model Proposal {
   @@unique([jobId, freelancerId])
   @@index([jobId])
   @@index([freelancerId])
+  @@index([jobId, status, createdAt])
 }
 
 enum ProposalStatus {
@@ -444,3 +445,33 @@ model WebhookSubscription {
   @@index([isActive])
   @@index([userId])
 }
+
+// ---------------------------------------------------------------------------
+// Historical Archives — cold archive tables for completed/refunded jobs (issue #272)
+// ---------------------------------------------------------------------------
+model ArchivedJob {
+  id           String   @id @default(cuid())
+  originalId   String   @unique
+  escrowId     BigInt?
+  clientId     String
+  freelancerId String?
+  title        String
+  description  String
+  asset        String   @default("XLM")
+  totalAmount  Decimal? @db.Decimal(36, 18)
+  status       String
+  isVerified   Boolean  @default(false)
+  tags         String[] @default([])
+  jobCreatedAt DateTime
+  jobUpdatedAt DateTime
+  archivedAt   DateTime @default(now())
+  /// Serialized complete job snapshot including milestones, deliverables,
+  /// messages, proposals, dispute records, and chain events.
+  archiveData  Json
+
+  @@index([archivedAt])
+  @@index([clientId])
+  @@index([freelancerId])
+  @@index([status, archivedAt])
+}
+
