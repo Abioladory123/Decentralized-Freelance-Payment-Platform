@@ -524,6 +524,8 @@ Full checklist, environment tables, and post-deploy verification queries:
 | [`docs/ASSETS.md`](./docs/ASSETS.md) | Payment-asset registry and how to add one |
 | [`docs/DISPUTES.md`](./docs/DISPUTES.md) | Arbitrator panel, thresholds, and the dispute timelock |
 | [`docs/REPUTATION.md`](./docs/REPUTATION.md) | Rating rules, weighting, and anti-spam |
+| [`docs/API_INTEGRATION_GUIDE.md`](./docs/API_INTEGRATION_GUIDE.md) | Third-party developer guide with TypeScript and Python code samples |
+| [`docs/TROUBLESHOOTING.md`](./docs/TROUBLESHOOTING.md) | Soroban contract error codes, Freighter wallet issues, and RPC diagnostics |
 | [`docs/wave-issues/`](./docs/wave-issues/) | Design notes for issues #2-#18 (all implemented) |
 | [`CONTRIBUTING.md`](./CONTRIBUTING.md) | Setup, conventions, contract reference tables |
 | [`SECURITY.md`](./SECURITY.md) | How to report a vulnerability |

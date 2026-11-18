@@ -29,6 +29,7 @@ import {
 } from "../lib/scval";
 import { formatAmount, getAsset, sumAmounts, toBaseUnits, UnknownAssetError } from "../lib/assets";
 import { buildEscrowReceipt } from "../lib/receipt";
+import { sendCachedJson } from "../lib/cache";
 import { buildTx } from "../lib/soroban";
 import { isValidStellarAddress } from "../lib/stellarAddress";
 import { FUNDED_JOB_STATUS } from "../lib/jobStatus";
@@ -271,8 +272,13 @@ escrowRouter.get("/:escrowId/receipt", async (req, res, next) => {
     if (!job) throw new AppError(404, "No job record for that escrow id");
 
     const events = await prisma.chainEvent.findMany({ where: { escrowId } });
+    const latestEvent = events.reduce<(typeof events)[number] | null>(
+      (latest, e) => (!latest || e.createdAt > latest.createdAt ? e : latest),
+      null,
+    );
+    const receiptTime = latestEvent?.createdAt ?? job.updatedAt ?? job.createdAt;
 
-    res.json(buildEscrowReceipt(escrowId, job, events));
+    sendCachedJson(req, res, buildEscrowReceipt(escrowId, job, events, receiptTime));
   } catch (err) {
     next(err);
   }

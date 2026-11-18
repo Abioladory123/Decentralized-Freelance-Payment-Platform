@@ -311,6 +311,7 @@ design issue first rather than a ready-to-merge task.
 Scoped work lives in the [issue tracker](https://github.com/vatal-system/Decentralized-Freelance-Payment-Platform/issues);
 the design notes behind issues #2-#18 live in
 [`docs/wave-issues/`](./docs/wave-issues/).
+For contract error codes, simulation failures, and wallet connection issues, refer to the [Troubleshooting Guide](./docs/TROUBLESHOOTING.md).
 
 ---
 

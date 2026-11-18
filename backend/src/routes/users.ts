@@ -37,6 +37,7 @@ import { isValidStellarAddress } from "../lib/stellarAddress";
 import { formatBaseUnitsForAsset } from "../lib/assets";
 import { buildMilestoneReminders, parseHorizonHours } from "../lib/reminders";
 import { transactionHistoryQuerySchema } from "../lib/schemas";
+import { sendCachedJson } from "../lib/cache";
 
 export const usersRouter = Router();
 
@@ -272,7 +273,7 @@ usersRouter.get("/:address/transactions", async (req, res, next) => {
       }),
     ]);
 
-    res.json({
+    sendCachedJson(req, res, {
       data: events.map((event) => {
         const symbol = assetByEscrow.get(event.escrowId.toString()) ?? null;
         return {
