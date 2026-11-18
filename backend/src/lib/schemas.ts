@@ -88,6 +88,7 @@ export const listJobsQuerySchema = z.object({
   client: z.string().optional(),
   freelancer: z.string().optional(),
   tag: z.string().optional(),
+  isVerified: z.preprocess((val) => (val === "true" ? true : val === "false" ? false : val), z.boolean()).optional(),
   /** Keyword search across title + description (issue #62). */
   q: z.string().trim().min(1).max(200).optional(),
   /** Ordering; the default is newest-first (issue #62). */

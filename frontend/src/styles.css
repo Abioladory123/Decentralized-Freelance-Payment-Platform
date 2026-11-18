@@ -41,6 +41,10 @@
   --badge-refunded-bg: #fdf5e6;
   --badge-refunded-text: #92610a;
   --badge-refunded-border: #f0dca8;
+
+  --badge-verified-bg: #f3e8ff;
+  --badge-verified-text: #6b21a8;
+  --badge-verified-border: #d8b4fe;
 }
 
 [data-theme="dark"] {
@@ -78,6 +82,10 @@
   --badge-refunded-bg: #451a03;
   --badge-refunded-text: #fcd34d;
   --badge-refunded-border: #b45309;
+
+  --badge-verified-bg: #3b0764;
+  --badge-verified-text: #e9d5ff;
+  --badge-verified-border: #7e22ce;
 }
 
 @media (prefers-color-scheme: dark) {
@@ -116,6 +124,10 @@
     --badge-refunded-bg: #451a03;
     --badge-refunded-text: #fcd34d;
     --badge-refunded-border: #b45309;
+
+    --badge-verified-bg: #3b0764;
+    --badge-verified-text: #e9d5ff;
+    --badge-verified-border: #7e22ce;
   }
 }
 
@@ -455,6 +467,12 @@ svg {
   background: var(--badge-refunded-bg);
   color: var(--badge-refunded-text);
   border-color: var(--badge-refunded-border);
+}
+
+.badge-verified {
+  background: var(--badge-verified-bg);
+  color: var(--badge-verified-text);
+  border-color: var(--badge-verified-border);
 }
 
 .badge-unknown {

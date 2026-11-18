@@ -45,4 +45,15 @@ describe("StatusBadge", () => {
     const classes = [...container.querySelectorAll("span")].map((el) => el.className);
     expect(classes).toEqual(["badge badge-active", "badge badge-active"]);
   });
+
+  it("renders verified grant badges with badge-verified class", () => {
+    const { rerender } = render(<StatusBadge status="Verified Grant" />);
+    expect(screen.getByText("Verified Grant").className).toBe("badge badge-verified");
+
+    rerender(<StatusBadge status="SCF Funded" />);
+    expect(screen.getByText("SCF Funded").className).toBe("badge badge-verified");
+
+    rerender(<StatusBadge status="verified" label="Custom Grant" />);
+    expect(screen.getByText("Custom Grant").className).toBe("badge badge-verified");
+  });
 });

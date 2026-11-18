@@ -20,6 +20,7 @@ import { disputesRouter } from "./routes/disputes";
 import { reputationRouter } from "./routes/reputation";
 import { notificationsRouter } from "./routes/notifications";
 import { milestonesRouter } from "./routes/milestones";
+import { webhooksRouter } from "./routes/webhooks";
 import { adminIndexerRouter } from "./routes/adminIndexer";
 import { tracingMiddleware } from "./lib/tracing";
 
@@ -154,6 +155,7 @@ export function createApp() {
   app.use("/api/disputes", disputesRouter);
   app.use("/api/reputation", reputationRouter);
   app.use("/api/notifications", notificationsRouter);
+  app.use("/api/webhooks", webhooksRouter);
   app.use("/api/admin/indexer", adminIndexerRouter);
 
   // Unmatched paths fall through to Express's built-in final handler, which

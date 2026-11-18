@@ -67,7 +67,7 @@ import {
   notifyEscrowRefunded,
   maskAddresses,
 } from "./lib/notifications";
-import { checkIndexerLagAlert } from "./lib/alerts";
+import { dispatchWebhooksForEvent } from "./lib/webhooks";
 
 const CURSOR_ID = "main";
 export const EVENT_PAGE_LIMIT = 100;
@@ -137,6 +137,7 @@ export interface IndexerStore {
   user: RatedStores["user"];
   rating: RatedStores["rating"];
   chainEvent?: Pick<PrismaClient["chainEvent"], "upsert">;
+  webhookSubscription?: Pick<PrismaClient["webhookSubscription"], "findMany">;
 }
 
 export function startIndexer() {
@@ -519,6 +520,14 @@ export async function dispatchEvent(
       // contract-config rotation (audited on-chain via getEvents), and no
       // Job row is affected by it.
       break;
+  }
+
+  // Trigger webhooks for external subscribers (issue #313).
+  // Best-effort: delivery failures must never interrupt the indexer event stream.
+  try {
+    await dispatchWebhooksForEvent(name, data, store);
+  } catch (err) {
+    console.error(`[indexer] failed to dispatch webhooks for event ${name}:`, err);
   }
 }
 
