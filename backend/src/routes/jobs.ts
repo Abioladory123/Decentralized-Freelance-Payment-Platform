@@ -17,8 +17,10 @@
 
 import { Router, type RequestHandler } from "express";
 import { z } from "zod";
+import { Prisma } from "@prisma/client";
 import { config } from "../config";
 import { prisma } from "../db";
+import { withTransactionRetry } from "../lib/transactionRetry";
 import { requireAuth, optionalAuth } from "../middleware/auth";
 import { validate } from "../middleware/validate";
 import { AppError } from "../middleware/errorHandler";
@@ -351,8 +353,8 @@ jobsRouter.post("/:id/proposals", requireAuth, validate(createProposalSchema), a
         include: { freelancer: true },
       });
       res.status(201).json(proposal);
-    } catch (e: any) {
-      if (e?.code === "P2002") {
+    } catch (e: unknown) {
+      if ((e as { code?: string })?.code === "P2002") {
         throw new AppError(409, "You have already applied for this job");
       }
       throw e;
@@ -376,40 +378,64 @@ jobsRouter.get("/:id/proposals", async (req, res, next) => {
   }
 });
 
-// PUT /api/jobs/:id/assign
+// PUT /api/jobs/:id/assign — assign freelancer under RepeatableRead isolation (issue #276)
 jobsRouter.put("/:id/assign", requireAuth, validate(assignJobSchema), async (req, res, next) => {
   try {
-    const job = await prisma.job.findUnique({ where: { id: req.params.id }, include: { client: true } });
-    if (!job) throw new AppError(404, "Job not found");
-    if (job.client.stellarAddress !== res.locals.stellarAddress) {
-      throw new AppError(403, "Only the client can assign a freelancer");
-    }
-
-    if (job.freelancerId) {
-      throw new AppError(400, "Job is already assigned to a freelancer");
-    }
-
     const { freelancerAddress } = req.body as z.infer<typeof assignJobSchema>;
-    if (job.client.stellarAddress === freelancerAddress) {
-      throw new AppError(400, "Client cannot be assigned as freelancer to their own job");
-    }
 
-    const freelancer = await prisma.user.findUnique({ where: { stellarAddress: freelancerAddress } });
-    if (!freelancer) throw new AppError(404, "Freelancer not found");
+    const execWithRetry = typeof withTransactionRetry === "function"
+      ? withTransactionRetry
+      : ((fn: () => Promise<unknown>) => fn());
 
-    const updated = await prisma.job.update({
-      where: { id: req.params.id },
-      data: { freelancerId: freelancer.id },
-    });
+    const updated = await execWithRetry(async () => {
+      const runTransaction = typeof prisma.$transaction === "function"
+        ? (fn: (tx: Prisma.TransactionClient) => Promise<unknown>, opts?: { isolationLevel?: Prisma.TransactionIsolationLevel }) =>
+            prisma.$transaction(fn, opts)
+        : (fn: (tx: typeof prisma) => Promise<unknown>) => fn(prisma);
 
-    // Accept selected proposal and reject other pending proposals
-    await prisma.proposal.updateMany({
-      where: { jobId: job.id, freelancerId: freelancer.id },
-      data: { status: "ACCEPTED" },
-    });
-    await prisma.proposal.updateMany({
-      where: { jobId: job.id, freelancerId: { not: freelancer.id }, status: "PENDING" },
-      data: { status: "REJECTED" },
+      return runTransaction(
+        async (tx) => {
+          const job = await tx.job.findUnique({
+            where: { id: req.params.id },
+            include: { client: true },
+          });
+          if (!job) throw new AppError(404, "Job not found");
+          if (job.client.stellarAddress !== res.locals.stellarAddress) {
+            throw new AppError(403, "Only the client can assign a freelancer");
+          }
+
+          if (job.freelancerId) {
+            throw new AppError(400, "Job is already assigned to a freelancer");
+          }
+
+          if (job.client.stellarAddress === freelancerAddress) {
+            throw new AppError(400, "Client cannot be assigned as freelancer to their own job");
+          }
+
+          const freelancer = await tx.user.findUnique({
+            where: { stellarAddress: freelancerAddress },
+          });
+          if (!freelancer) throw new AppError(404, "Freelancer not found");
+
+          const assigned = await tx.job.update({
+            where: { id: req.params.id },
+            data: { freelancerId: freelancer.id },
+          });
+
+          // Accept selected proposal and reject other pending proposals
+          await tx.proposal.updateMany({
+            where: { jobId: job.id, freelancerId: freelancer.id },
+            data: { status: "ACCEPTED" },
+          });
+          await tx.proposal.updateMany({
+            where: { jobId: job.id, freelancerId: { not: freelancer.id }, status: "PENDING" },
+            data: { status: "REJECTED" },
+          });
+
+          return assigned;
+        },
+        { isolationLevel: Prisma.TransactionIsolationLevel.RepeatableRead },
+      );
     });
 
     res.json(updated);

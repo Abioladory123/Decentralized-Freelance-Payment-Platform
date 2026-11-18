@@ -33,7 +33,9 @@ import { sendCachedJson } from "../lib/cache";
 import { buildTx } from "../lib/soroban";
 import { isValidStellarAddress } from "../lib/stellarAddress";
 import { FUNDED_JOB_STATUS } from "../lib/jobStatus";
+import { Prisma } from "@prisma/client";
 import { prisma } from "../db";
+import { withTransactionRetry } from "../lib/transactionRetry";
 import { requireAuth } from "../middleware/auth";
 import { validate } from "../middleware/validate";
 import { AppError } from "../middleware/errorHandler";
@@ -216,26 +218,40 @@ escrowRouter.put(
       );
 
       // The edit replaces the breakdown, so the mirror has to replace its rows
-      // too — otherwise a shorter list leaves orphaned milestones behind.
-      const updated = await prisma.$transaction(async (tx) => {
-        await tx.milestone.deleteMany({ where: { jobId: job.id } });
-        await tx.milestone.createMany({
-          data: milestones.map((m, i) => ({
-            jobId: job.id,
-            index: i,
-            amount: formatAmount(
-              toBaseUnits(m.amount, asset.decimals),
-              asset.decimals,
-            ),
-            description: m.description ?? `Milestone ${i + 1}`,
-            deadline: m.deadline ? new Date(m.deadline) : null,
-          })),
-        });
-        return tx.job.update({
-          where: { id: job.id },
-          data: { totalAmount },
-          include: { milestones: { orderBy: { index: "asc" } } },
-        });
+      // too — executed under RepeatableRead isolation with retry (issue #276).
+      const execWithRetry = typeof withTransactionRetry === "function"
+        ? withTransactionRetry
+        : ((fn: () => Promise<unknown>) => fn());
+
+      const updated = await execWithRetry(async () => {
+        const runTransaction = typeof prisma.$transaction === "function"
+          ? (fn: (tx: Prisma.TransactionClient) => Promise<unknown>, opts?: { isolationLevel?: Prisma.TransactionIsolationLevel }) =>
+              prisma.$transaction(fn, opts)
+          : (fn: (tx: typeof prisma) => Promise<unknown>) => fn(prisma);
+
+        return runTransaction(
+          async (tx) => {
+            await tx.milestone.deleteMany({ where: { jobId: job.id } });
+            await tx.milestone.createMany({
+              data: milestones.map((m, i) => ({
+                jobId: job.id,
+                index: i,
+                amount: formatAmount(
+                  toBaseUnits(m.amount, asset.decimals),
+                  asset.decimals,
+                ),
+                description: m.description ?? `Milestone ${i + 1}`,
+                deadline: m.deadline ? new Date(m.deadline) : null,
+              })),
+            });
+            return tx.job.update({
+              where: { id: job.id },
+              data: { totalAmount },
+              include: { milestones: { orderBy: { index: "asc" } } },
+            });
+          },
+          { isolationLevel: Prisma.TransactionIsolationLevel.RepeatableRead },
+        );
       });
 
       res.json(updated);
@@ -373,19 +389,36 @@ escrowRouter.post("/sync/:jobId", requireAuth, validate(syncSchema), async (req,
   try {
     const { escrowId } = req.body as z.infer<typeof syncSchema>;
 
-    const job = await prisma.job.findUnique({
-      where: { id: req.params.jobId },
-      include: { client: true },
-    });
-    if (!job) throw new AppError(404, "Job not found");
-    if (job.client.stellarAddress !== res.locals.stellarAddress) {
-      throw new AppError(403, "Only the job's client can link its escrow");
-    }
+    const execWithRetry = typeof withTransactionRetry === "function"
+      ? withTransactionRetry
+      : ((fn: () => Promise<unknown>) => fn());
 
-    const updated = await prisma.job.update({
-      where: { id: job.id },
-      data: { escrowId: BigInt(escrowId), status: FUNDED_JOB_STATUS },
+    const updated = await execWithRetry(async () => {
+      const runTransaction = typeof prisma.$transaction === "function"
+        ? (fn: (tx: Prisma.TransactionClient) => Promise<unknown>, opts?: { isolationLevel?: Prisma.TransactionIsolationLevel }) =>
+            prisma.$transaction(fn, opts)
+        : (fn: (tx: typeof prisma) => Promise<unknown>) => fn(prisma);
+
+      return runTransaction(
+        async (tx) => {
+          const job = await tx.job.findUnique({
+            where: { id: req.params.jobId },
+            include: { client: true },
+          });
+          if (!job) throw new AppError(404, "Job not found");
+          if (job.client.stellarAddress !== res.locals.stellarAddress) {
+            throw new AppError(403, "Only the job's client can link its escrow");
+          }
+
+          return tx.job.update({
+            where: { id: job.id },
+            data: { escrowId: BigInt(escrowId), status: FUNDED_JOB_STATUS },
+          });
+        },
+        { isolationLevel: Prisma.TransactionIsolationLevel.RepeatableRead },
+      );
     });
+
     // If events arrived before the job was linked, reconcile any dead letters recorded for it
     await prisma.indexerDeadLetter
       ?.deleteMany({

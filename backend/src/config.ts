@@ -43,10 +43,11 @@ const schema = z.object({
   INDEXER_LAG_ALERT_THRESHOLD: z.coerce.number().int().positive().default(1000),
   // Maximum unhandled dead-letter rows before alerting.
   DEAD_LETTER_ALERT_THRESHOLD: z.coerce.number().int().positive().default(10),
-  // Prometheus metrics auth configuration (issue #305)
-  METRICS_USER: z.string().default(""),
-  METRICS_PASSWORD: z.string().default(""),
-  METRICS_TOKEN: z.string().default(""),
+  // Prisma connection pool settings (issue #275).
+  // DATABASE_POOL_SIZE controls connection_limit (default: 10 in containerized/production setups).
+  // DATABASE_TIMEOUT_MS controls query statement_timeout in ms and pool_timeout (default: 10_000).
+  DATABASE_POOL_SIZE: z.coerce.number().int().positive().default(10),
+  DATABASE_TIMEOUT_MS: z.coerce.number().int().positive().default(10_000),
 });
 
 const parsed = schema.safeParse(process.env);
