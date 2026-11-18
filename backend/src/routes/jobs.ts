@@ -18,7 +18,7 @@
 import { Router } from "express";
 import { z } from "zod";
 import { prisma } from "../db";
-import { requireAuth } from "../middleware/auth";
+import { requireAuth, optionalAuth } from "../middleware/auth";
 import { validate } from "../middleware/validate";
 import { AppError } from "../middleware/errorHandler";
 import {
@@ -265,7 +265,7 @@ jobsRouter.post("/", requireAuth, validate(createJobSchema), async (req, res, ne
 });
 
 // GET /api/jobs/:id
-jobsRouter.get("/:id", async (req, res, next) => {
+jobsRouter.get("/:id", optionalAuth, async (req, res, next) => {
   try {
     const job = await prisma.job.findUnique({
       where: { id: req.params.id },
@@ -289,6 +289,20 @@ jobsRouter.get("/:id", async (req, res, next) => {
       },
     });
     if (!job) throw new AppError(404, "Job not found");
+
+    // Restrict proposal details visibility (issue #309):
+    // 1. Client can view all submitted proposals.
+    // 2. Authenticated freelancer can view only their own proposal.
+    // 3. Unauthenticated visitor or other third parties receive an empty list.
+    const callerAddress = res.locals.stellarAddress;
+    if (!callerAddress) {
+      job.proposals = [];
+    } else if (job.client?.stellarAddress !== callerAddress) {
+      job.proposals = (job.proposals || []).filter(
+        (p) => p.freelancer?.stellarAddress === callerAddress,
+      );
+    }
+
     res.json(job);
   } catch (err) {
     next(err);
