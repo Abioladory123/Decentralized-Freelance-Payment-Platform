@@ -8,11 +8,13 @@ import {
   type ContractEventLike,
 } from "../lib/events";
 import { FUNDED_JOB_STATUS } from "../lib/jobStatus";
+import { freelancerDirectoryCache } from "../lib/cache";
 import {
   EVENT_PAGE_LIMIT,
   EVENT_TOPIC_FIELDS,
   applyRatedEvent,
   buildChainEvent,
+  buildEventFilters,
   dispatchEvent,
   handleCreated,
   handleFunded,
@@ -278,6 +280,63 @@ describe("chain event history (#72)", () => {
 });
 
 describe("processContractEvents", () => {
+  it("combines every contract into one RPC event filter (#292)", () => {
+    const escrow = "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD2KM";
+    const dispute = "CBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB";
+    const reputation = "CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC";
+
+    // One filter, not one per contract: the RPC ORs the ids inside the filter,
+    // so this is the minimum number of round trips for the three streams.
+    expect(buildEventFilters([escrow, dispute, reputation])).toEqual([
+      { type: "contract", contractIds: [escrow, dispute, reputation] },
+    ]);
+
+    // A repeated id adds no events, only a longer filter.
+    expect(buildEventFilters([escrow, escrow])).toEqual([
+      { type: "contract", contractIds: [escrow] },
+    ]);
+
+    expect(buildEventFilters([])).toEqual([]);
+  });
+
+  it("fetches Escrow, Dispute and Reputation events in a single request", async () => {
+    const escrow = "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD2KM";
+    const dispute = "CBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB";
+    const reputation = "CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC";
+
+    // One event stream per contract, as the RPC would return from a single
+    // batch response once all three ids are in the same filter.
+    const events = [
+      makeEvent("funded", { escrow_id: nativeToScVal(7n, { type: "u64" }) }, 10),
+      makeEvent("rated", { escrow_id: nativeToScVal(7n, { type: "u64" }) }, 11),
+      makeTopicEvent("raised", 7n, { dispute_id: nativeToScVal(0n, { type: "u64" }) }, 12),
+    ];
+    const source = {
+      getEvents: vi.fn(async () => ({ events, latestLedger: 12 })),
+    };
+    const cursor = { get: async () => 9, set: vi.fn(async () => undefined) };
+    const dispatch = vi.fn(async (_event: ContractEventLike) => undefined);
+
+    const next = await processContractEvents(source, cursor, [escrow, dispute, reputation], dispatch);
+
+    // One HTTP request for all three contracts, one filter holding all ids.
+    expect(source.getEvents).toHaveBeenCalledTimes(1);
+    expect(source.getEvents).toHaveBeenCalledWith(
+      expect.objectContaining({
+        startLedger: 10,
+        filters: [{ type: "contract", contractIds: [escrow, dispute, reputation] }],
+      }),
+    );
+    // Every stream from the batch response is processed.
+    expect(dispatch).toHaveBeenCalledTimes(3);
+    expect(dispatch.mock.calls.map(([event]) => event.id)).toEqual([
+      "evt-10",
+      "evt-11",
+      "evt-12",
+    ]);
+    expect(next).toBe(12);
+  });
+
   it("advances the cursor only after every event has been processed", async () => {
     const order: string[] = [];
     const events = [
@@ -825,6 +884,18 @@ describe("rated events", () => {
     expect(row).toMatchObject({ jobId: "job-1", score: 4 });
     // Both participants were materialised, so the ratee resolves to a real row.
     expect(row.rateeId).toBe(db.seedUser(RATEE).id);
+  });
+
+  it("invalidates the cached freelancer directory after a rating (#290)", async () => {
+    const db = new FakeRatedStore();
+    db.jobs.push({ id: "job-1", escrowId: 7n });
+    freelancerDirectoryCache.set("directory", { total: 1 });
+    expect(freelancerDirectoryCache.get("directory")).toEqual({ total: 1 });
+
+    await applyRatedEvent(db, 7n, ratedData());
+
+    // A cached page would otherwise show the pre-rating score for up to 60s.
+    expect(freelancerDirectoryCache.get("directory")).toBeUndefined();
   });
 
   it("converges with a row POST /api/reputation already created instead of duplicating", async () => {

@@ -6,11 +6,12 @@
  * completed jobs, or join date. Each freelancer entry links to the Profile page.
  */
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import Layout from "../components/Layout";
 import AddressField from "../components/AddressField";
 import { fetchFreelancers, type FreelancerApi } from "../lib/api";
+import { useDebounce } from "../hooks/useDebounce";
 
 const PAGE_SIZE = 10;
 
@@ -20,6 +21,7 @@ export default function FreelancerDirectory() {
   const [error, setError] = useState<string | null>(null);
 
   const [searchInput, setSearchInput] = useState("");
+  const debouncedSearch = useDebounce(searchInput, 300);
   const [activeSearch, setActiveSearch] = useState("");
   const [sortOption, setSortOption] = useState<"rep_desc" | "rep_asc" | "jobs_desc" | "recent_desc">(
     "rep_desc",
@@ -73,8 +75,21 @@ export default function FreelancerDirectory() {
     [activeSearch, sortOption],
   );
 
+  // Search runs against the settled input, not every keystroke.
+  useEffect(() => {
+    setActiveSearch(debouncedSearch.trim());
+  }, [debouncedSearch]);
+
+  const inFlight = useRef<AbortController | null>(null);
+
+  // Cancel a request from the previous query as soon as the user types again.
+  useEffect(() => {
+    inFlight.current?.abort();
+  }, [searchInput]);
+
   useEffect(() => {
     const controller = new AbortController();
+    inFlight.current = controller;
     void loadFreelancers(1, false, controller.signal);
     return () => controller.abort();
   }, [loadFreelancers]);

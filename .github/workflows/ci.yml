@@ -159,6 +159,48 @@ jobs:
       - run: npx tsc --noEmit
       - run: npm test
 
+  # Build both shipped images here so a Dockerfile change is reviewed in the
+  # same run as its source, and cache every layer in the Actions cache (issue
+  # #289). Without `cache-to: type=gha`, each run rebuilds `npm ci`, the Prisma
+  # client and the Vite bundle from scratch; with it, only the layers whose
+  # inputs changed (usually just the source copy) are rebuilt.
+  #
+  # `scope` keeps the two images' caches separate — they share the node base
+  # layer but have different lockfiles and build steps.
+  docker:
+    name: Docker – build images with layer cache
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+
+      - name: Build backend image
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          file: ./backend/Dockerfile
+          # The image is only a build artifact here: no registry credentials
+          # are available to the read-only token, and nothing is pushed.
+          push: false
+          load: false
+          tags: freelance-backend:ci
+          cache-from: type=gha,scope=backend
+          cache-to: type=gha,mode=max,scope=backend
+
+      - name: Build frontend image
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: ./frontend
+          file: ./frontend/Dockerfile
+          push: false
+          load: false
+          tags: freelance-frontend:ci
+          cache-from: type=gha,scope=frontend
+          cache-to: type=gha,mode=max,scope=frontend
+
   # Dependency vulnerability scan (issue #110).
   #
   # Advisory for now, not blocking: both lockfiles currently carry known

@@ -9,6 +9,8 @@ import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vite
 const h = vi.hoisted(() => ({
   upsert: vi.fn(),
   cursorUpdate: vi.fn(),
+  getEventsCalls: 0,
+  latestLedgerCalls: 0,
 }));
 
 vi.mock("../db", () => ({
@@ -20,11 +22,13 @@ vi.mock("@stellar/stellar-sdk", async (importOriginal) => {
   // No network: an empty page is all the loop needs to keep ticking.
   class FakeServer {
     async getEvents() {
-      return { events: [], latestLedger: 1 };
+      h.getEventsCalls++;
+      return { events: [], latestLedger: 100 };
     }
 
     async getLatestLedger() {
-      return { sequence: 1 };
+      h.latestLedgerCalls++;
+      return { sequence: 100 };
     }
   }
 
@@ -47,6 +51,8 @@ beforeEach(() => {
   h.cursorUpdate.mockReset();
   h.upsert.mockResolvedValue({ id: "main", lastLedger: 0 });
   h.cursorUpdate.mockResolvedValue({});
+  h.getEventsCalls = 0;
+  h.latestLedgerCalls = 0;
 });
 
 afterEach(() => {
@@ -62,6 +68,20 @@ describe("startIndexer handle", () => {
 
     await vi.advanceTimersByTimeAsync(5_000);
     expect(h.upsert.mock.calls.length).toBeGreaterThanOrEqual(2);
+  });
+
+  it("reuses the chain tip from the event response instead of polling it every tick (#292)", async () => {
+    startIndexer();
+
+    // The first poll has no event response yet, so it must ask for the tip.
+    await vi.advanceTimersByTimeAsync(0);
+    expect(h.latestLedgerCalls).toBe(1);
+    expect(h.getEventsCalls).toBe(1);
+
+    // Later polls reuse the tip that response reported: one RPC call per tick.
+    await vi.advanceTimersByTimeAsync(5_000);
+    expect(h.getEventsCalls).toBeGreaterThanOrEqual(2);
+    expect(h.latestLedgerCalls).toBe(1);
   });
 
   it("stops polling after stop() resolves", async () => {

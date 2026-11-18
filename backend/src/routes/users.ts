@@ -37,6 +37,11 @@ import { isValidStellarAddress } from "../lib/stellarAddress";
 import { formatBaseUnitsForAsset } from "../lib/assets";
 import { buildMilestoneReminders, parseHorizonHours } from "../lib/reminders";
 import { transactionHistoryQuerySchema } from "../lib/schemas";
+import {
+  FREELANCER_DIRECTORY_TTL_MS,
+  freelancerDirectoryCache,
+  invalidateFreelancerDirectory,
+} from "../lib/cache";
 
 export const usersRouter = Router();
 
@@ -85,6 +90,8 @@ usersRouter.post("/auth", validate(authSchema), async (req, res, next) => {
       create: { stellarAddress: address },
       update: {},
     });
+    // A first login adds a row the public directory lists.
+    invalidateFreelancerDirectory();
 
     // Create a new session for token revocation tracking (issue #172)
     const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000); // 7 days
@@ -108,6 +115,45 @@ usersRouter.post("/auth", validate(authSchema), async (req, res, next) => {
 });
 
 // GET /api/users/freelancers (and GET /api/users) — public freelancer directory (#68)
+interface FreelancerDirectoryPayload {
+  freelancers: Array<{
+    id: string;
+    stellarAddress: string;
+    displayName: string | null;
+    bio: string | null;
+    createdAt: Date;
+    averageScore: number;
+    totalRatings: number;
+    completedJobsCount: number;
+    totalJobsCount: number;
+  }>;
+  total: number;
+  page: number;
+  limit: number;
+  totalPages: number;
+}
+
+/**
+ * Cache key for one directory page. Every input that changes the SQL or its
+ * ordering is part of the key, so a search or sort can never be served another
+ * query's response.
+ */
+function freelancerDirectoryCacheKey(params: {
+  search: string;
+  sortBy: string;
+  sortOrder: "asc" | "desc";
+  page: number;
+  limit: number;
+}): string {
+  return JSON.stringify([
+    params.search,
+    params.sortBy,
+    params.sortOrder,
+    params.page,
+    params.limit,
+  ]);
+}
+
 const getFreelancersHandler = async (
   req: Request,
   res: Response,
@@ -125,6 +171,15 @@ const getFreelancersHandler = async (
         : "desc";
     const page = Math.max(1, parseInt(String(req.query.page ?? "1"), 10) || 1);
     const limit = Math.min(100, Math.max(1, parseInt(String(req.query.limit ?? "20"), 10) || 20));
+
+    const cacheKey = freelancerDirectoryCacheKey({ search, sortBy, sortOrder, page, limit });
+    const cached = freelancerDirectoryCache.get<FreelancerDirectoryPayload>(cacheKey);
+    if (cached) {
+      res.set("X-Cache", "HIT");
+      res.set("Cache-Control", `public, max-age=${FREELANCER_DIRECTORY_TTL_MS / 1000}`);
+      res.json(cached);
+      return;
+    }
 
     const where = search
       ? {
@@ -205,7 +260,7 @@ const getFreelancersHandler = async (
     ]);
     const totalPages = Math.ceil(total / limit) || 1;
 
-    res.json({
+    const payload: FreelancerDirectoryPayload = {
       freelancers: paged.map((user) => ({
         ...user,
         averageScore: Number(user.averageScore.toFixed(2)),
@@ -214,7 +269,14 @@ const getFreelancersHandler = async (
       page,
       limit,
       totalPages,
-    });
+    };
+
+    // Only successful responses are cached: a failed query must be retried on
+    // the next request, not replayed for the TTL.
+    freelancerDirectoryCache.set(cacheKey, payload);
+    res.set("X-Cache", "MISS");
+    res.set("Cache-Control", `public, max-age=${FREELANCER_DIRECTORY_TTL_MS / 1000}`);
+    res.json(payload);
   } catch (err) {
     next(err);
   }
@@ -398,6 +460,8 @@ usersRouter.put("/me", requireAuth, validate(updateSchema), async (req, res, nex
         ...req.body,
       },
     });
+    // Display name and bio are searchable columns in the directory.
+    invalidateFreelancerDirectory();
     res.json(user);
   } catch (err) {
     next(err);
