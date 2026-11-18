@@ -595,6 +595,132 @@ fn release_partial_out_of_bounds_is_rejected() {
     ));
 }
 
+#[test]
+fn partial_release_exact_sequence_completes_milestone() {
+    let f = fixture();
+    let id = f.funded(&[100]);
+
+    // 1st partial release: 30 of 100
+    f.c().release_partial(&id, &0, &30);
+    assert_eq!(f.balance(&f.freelancer), 30);
+    let m = f.c().get(&id).milestones.get(0).unwrap();
+    assert_eq!(m.released_amount, 30);
+    assert!(!m.released);
+    assert_eq!(f.c().get(&id).status, EscrowStatus::Active);
+
+    // 2nd partial release: 30 more of 100 (cumulative 60)
+    f.c().release_partial(&id, &0, &30);
+    assert_eq!(f.balance(&f.freelancer), 60);
+    let m = f.c().get(&id).milestones.get(0).unwrap();
+    assert_eq!(m.released_amount, 60);
+    assert!(!m.released);
+    assert_eq!(f.c().get(&id).status, EscrowStatus::Active);
+
+    // 3rd partial release: remaining 40 of 100 (cumulative 100) completes milestone
+    f.c().release_partial(&id, &0, &40);
+    assert_eq!(f.balance(&f.freelancer), 100);
+    let m = f.c().get(&id).milestones.get(0).unwrap();
+    assert_eq!(m.released_amount, 100);
+    assert!(m.released);
+    assert_eq!(f.c().get(&id).status, EscrowStatus::Completed);
+    assert_eq!(f.balance(&f.escrow), 0);
+
+    // Any subsequent release attempt is rejected since escrow is completed
+    let res = f.c().try_release_partial(&id, &0, &1);
+    assert!(matches!(res, Err(Ok(EscrowError::InvalidStatus))));
+}
+
+#[test]
+fn partial_release_exceeding_remaining_is_rejected() {
+    let f = fixture();
+    let id = f.funded(&[100]);
+
+    // Release 30 of 100 -> 70 remaining
+    f.c().release_partial(&id, &0, &30);
+
+    // 71 is 1 stroop more than remaining (70) -> rejected
+    let res = f.c().try_release_partial(&id, &0, &71);
+    assert!(matches!(res, Err(Ok(EscrowError::AmountExceedsMilestone))));
+
+    // Release 69 -> 1 remaining
+    f.c().release_partial(&id, &0, &69);
+
+    // 2 is 1 stroop more than remaining (1) -> rejected
+    let res = f.c().try_release_partial(&id, &0, &2);
+    assert!(matches!(res, Err(Ok(EscrowError::AmountExceedsMilestone))));
+
+    // Exact remaining 1 succeeds and completes milestone
+    f.c().release_partial(&id, &0, &1);
+    assert_eq!(f.c().get(&id).status, EscrowStatus::Completed);
+    assert_eq!(f.balance(&f.freelancer), 100);
+    assert_eq!(f.balance(&f.escrow), 0);
+}
+
+#[test]
+fn dispute_after_partial_releases_only_splits_unreleased_balance() {
+    let f = fixture();
+    let admin = Address::generate(&f.env);
+    let dispute = Address::generate(&f.env);
+    init_escrow(&f, &admin, &dispute);
+
+    // 2 milestones: 100 and 200, total = 300
+    let id = f.funded(&[100, 200]);
+
+    // Partial release 40 on milestone 0
+    f.c().release_partial(&id, &0, &40);
+    assert_eq!(f.balance(&f.freelancer), 40);
+
+    // Remaining on milestone 0 is 60, milestone 1 is 200. Total unreleased = 260.
+    f.c().open_dispute(&id, &f.client);
+    assert_eq!(f.c().get(&id).status, EscrowStatus::Disputed);
+
+    // Attempting to resolve with initial full 300 (e.g. 150 + 150) must be rejected
+    let res = f.c().try_resolve(&id, &150, &150);
+    assert!(matches!(res, Err(Ok(EscrowError::InvalidShares))));
+
+    // Resolving with exact unreleased 260 (client: 100, freelancer: 160) succeeds
+    f.c().resolve(&id, &100, &160);
+
+    // Balances check:
+    // Freelancer received: 40 (earlier partial) + 160 (dispute share) = 200
+    assert_eq!(f.balance(&f.freelancer), 200);
+    // Client funded 300 (10,000 - 300 = 9,700), received back 100 -> 9,800
+    assert_eq!(f.balance(&f.client), 9_800);
+    // Escrow contract has 0 remaining (no funds stranded or leaked)
+    assert_eq!(f.balance(&f.escrow), 0);
+    assert_eq!(f.c().get(&id).status, EscrowStatus::Completed);
+}
+
+#[test]
+fn reclaim_expired_after_partial_release_refunds_only_unreleased_stroops() {
+    let f = fixture();
+    // 2 milestones: 400 and 600, total = 1000
+    let id = f.funded(&[400, 600]);
+
+    // Release 150 partially on milestone 0
+    f.c().release_partial(&id, &0, &150);
+    assert_eq!(f.balance(&f.freelancer), 150);
+
+    // Advance timestamp past expiry (default expiry is 10,000)
+    f.env.ledger().set_timestamp(10_001);
+
+    // Client reclaims expired escrow
+    f.c().reclaim_expired(&id);
+
+    // Unreleased balance was: (400 - 150) + 600 = 850
+    // Client had 9,000 left after funding 1,000. Reclaim adds 850 -> 9,850.
+    assert_eq!(f.balance(&f.client), 9_850);
+    // Freelancer retains the 150 already released
+    assert_eq!(f.balance(&f.freelancer), 150);
+    // Escrow contract balance is drained to 0
+    assert_eq!(f.balance(&f.escrow), 0);
+    assert_eq!(f.c().get(&id).status, EscrowStatus::Refunded);
+
+    // Second reclaim is rejected
+    let res = f.c().try_reclaim_expired(&id);
+    assert!(matches!(res, Err(Ok(EscrowError::InvalidStatus))));
+}
+
 // ---------------------------------------------------------------------------
 // open_dispute
 // ---------------------------------------------------------------------------

@@ -415,14 +415,22 @@ export function restoreDeadLetterEvent(payload: unknown): ContractEventLike {
     throw new Error("Dead letter event payload is invalid");
   }
 
-  return {
-    ledger: row.ledger as number,
-    topic: row.topic.map((value) => xdr.ScVal.fromXDR(value, "base64")),
-    value: xdr.ScVal.fromXDR(row.value, "base64"),
-    ...(typeof row.id === "string" ? { id: row.id } : {}),
-    ...(typeof row.txHash === "string" ? { txHash: row.txHash } : {}),
-    ...(typeof row.ledgerClosedAt === "string" ? { ledgerClosedAt: row.ledgerClosedAt } : {}),
-  };
+  try {
+    return {
+      ledger: row.ledger as number,
+      topic: row.topic.map((value) => xdr.ScVal.fromXDR(value, "base64")),
+      value: xdr.ScVal.fromXDR(row.value, "base64"),
+      ...(typeof row.id === "string" ? { id: row.id } : {}),
+      ...(typeof row.txHash === "string" ? { txHash: row.txHash } : {}),
+      ...(typeof row.ledgerClosedAt === "string" ? { ledgerClosedAt: row.ledgerClosedAt } : {}),
+    };
+  } catch (err) {
+    throw new Error(
+      `Failed to decode XDR from dead letter event payload: ${
+        err instanceof Error ? err.message : String(err)
+      }`
+    );
+  }
 }
 
 // ---------------------------------------------------------------------------
