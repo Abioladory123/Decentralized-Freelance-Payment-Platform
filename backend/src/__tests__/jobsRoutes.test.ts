@@ -155,6 +155,7 @@ describe("GET /api/jobs?tag=", () => {
 
     expect(h.job.findMany).toHaveBeenCalledTimes(1);
     expect(h.job.findMany.mock.calls[0][0].where).toEqual({
+      status: { not: "CANCELLED" },
       tags: { has: "smart-contracts" },
     });
   });
@@ -171,7 +172,18 @@ describe("GET /api/jobs?tag=", () => {
   it("leaves the tag out of the query when the filter is absent", async () => {
     await get("/");
 
-    expect(h.job.findMany.mock.calls[0][0].where).toEqual({});
+    // No status filter means "everything open", which excludes withdrawals.
+    expect(h.job.findMany.mock.calls[0][0].where).toEqual({
+      status: { not: "CANCELLED" },
+    });
+  });
+
+  it("lists cancelled jobs only when they are asked for explicitly (issue #81)", async () => {
+    await get("/?status=CANCELLED");
+
+    // The default hides them, but a status filter is an explicit request and
+    // must still reach the database unchanged.
+    expect(h.job.findMany.mock.calls[0][0].where).toEqual({ status: "CANCELLED" });
   });
 
   it("rejects a tag outside the taxonomy with the accepted list", async () => {

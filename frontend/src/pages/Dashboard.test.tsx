@@ -28,6 +28,8 @@ const h = vi.hoisted(() => ({
   fetchProposals: vi.fn(),
   submitProposal: vi.fn(),
   assignFreelancer: vi.fn(),
+  // Withdrawing an unfunded job (issue #81).
+  cancelJob: vi.fn(),
   // The bookmark list is authenticated and loaded when a wallet connects (#71).
   authenticate: vi.fn(async () => "jwt-1"),
   fetchSavedJobs: vi.fn(async () => [] as unknown[]),
@@ -55,6 +57,7 @@ vi.mock("../lib/api", () => ({
   fetchProposals: h.fetchProposals,
   submitProposal: h.submitProposal,
   assignFreelancer: h.assignFreelancer,
+  cancelJob: h.cancelJob,
   authenticate: h.authenticate,
   fetchSavedJobs: h.fetchSavedJobs,
   saveJob: h.saveJob,
@@ -110,6 +113,7 @@ beforeEach(() => {
   h.fetchProposals.mockReset();
   h.submitProposal.mockReset();
   h.assignFreelancer.mockReset();
+  h.cancelJob.mockReset();
   h.fetchSavedJobs.mockReset();
   h.fetchSavedJobs.mockResolvedValue([]);
   h.saveJob.mockClear();
@@ -561,6 +565,76 @@ describe("Dashboard open-by-id form", () => {
     expect(h.navigate).not.toHaveBeenCalled();
     // No validation beyond "not blank" — see #106 for the non-numeric input that
     // this form hands straight to JobDetail.
+  });
+});
+
+describe("Dashboard cancelling unfunded jobs (Issue #81)", () => {
+  it("lets a client withdraw their own unfunded CREATED job after confirming", async () => {
+    h.wallet.publicKey = CLIENT;
+    h.fetchJobs.mockResolvedValueOnce([
+      job({
+        id: "job-draft-1",
+        escrowId: null,
+        title: "Draft job",
+        status: "CREATED",
+        client: { stellarAddress: CLIENT },
+      }),
+    ]);
+    h.cancelJob.mockResolvedValue({ id: "job-draft-1", status: "CANCELLED" });
+
+    render(<Dashboard />);
+    await screen.findByText("Draft job");
+
+    fireEvent.click(screen.getByRole("button", { name: "Cancel job" }));
+
+    // Nothing is sent until the inline confirmation is accepted.
+    expect(h.cancelJob).not.toHaveBeenCalled();
+    expect(screen.getByText(/This unfunded job will be withdrawn/)).toBeTruthy();
+
+    fireEvent.click(screen.getByRole("button", { name: "Confirm cancel" }));
+
+    await waitFor(() => {
+      expect(h.authenticate).toHaveBeenCalledWith(CLIENT, expect.any(Function));
+      expect(h.cancelJob).toHaveBeenCalledWith("job-draft-1", "jwt-1");
+    });
+    // The API hides cancelled jobs, and the row is also removed optimistically.
+    await waitFor(() => expect(screen.queryByText("Draft job")).toBeNull());
+  });
+
+  it("does not offer cancellation once the job is funded", async () => {
+    h.wallet.publicKey = CLIENT;
+    h.fetchJobs.mockResolvedValue([
+      job({
+        id: "job-funded-1",
+        escrowId: 7,
+        title: "Funded job",
+        status: "CREATED",
+        client: { stellarAddress: CLIENT },
+      }),
+    ]);
+
+    render(<Dashboard />);
+    await screen.findByText("Funded job");
+
+    expect(screen.queryByRole("button", { name: "Cancel job" })).toBeNull();
+  });
+
+  it("does not offer cancellation to a freelancer or visitor", async () => {
+    h.wallet.publicKey = "GAAZI4TCR3TY5OJHCTJC2A4QSY6CJWJH5IAJTGKIN2ER7LBNVKOCCWN";
+    h.fetchJobs.mockResolvedValue([
+      job({
+        id: "job-draft-2",
+        escrowId: null,
+        title: "Someone else's draft",
+        status: "CREATED",
+        client: { stellarAddress: CLIENT },
+      }),
+    ]);
+
+    render(<Dashboard />);
+    await screen.findByText("Someone else's draft");
+
+    expect(screen.queryByRole("button", { name: "Cancel job" })).toBeNull();
   });
 });
 

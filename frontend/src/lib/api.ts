@@ -208,6 +208,24 @@ export async function assignFreelancer(
 }
 
 /**
+ * Withdraw an unfunded job the caller owns (issue #81).
+ *
+ * Cancelling an already-cancelled job is accepted by the API and returns the
+ * row, so a retry after a dropped response settles without a special case here.
+ */
+export async function cancelJob(jobId: string, token: string): Promise<JobApi> {
+  const res = await fetch(`${API_BASE_URL}/api/jobs/${encodeURIComponent(jobId)}/cancel`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  if (!res.ok) {
+    const errorData = (await res.json().catch(() => null)) as { error?: string } | null;
+    throw new Error(errorData?.error ?? `Could not cancel the job (HTTP ${res.status})`);
+  }
+  return (await res.json()) as JobApi;
+}
+
+/**
  * Every job an address took part in, as client or as freelancer.
  *
  * The API filters by one role at a time, so this asks for both and merges them:

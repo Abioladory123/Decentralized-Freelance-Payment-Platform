@@ -188,6 +188,7 @@ return an **unsigned XDR** for the client to sign, and never a key.
 | `DELETE` | `/api/jobs/:id/save` | ✅ | Remove a bookmark |
 | `POST` | `/api/jobs` | ✅ | Create the off-chain job record |
 | `GET` | `/api/jobs/:id` | — | Job detail with milestones |
+| `POST` | `/api/jobs/:id/cancel` | ✅ | Withdraw an unfunded `CREATED` job (client only) |
 | `PUT` | `/api/jobs/:id/assign` | ✅ | Assign a freelancer |
 | `POST` | `/api/escrow/build/create` | ✅ | Build `escrow.create` |
 | `POST` | `/api/escrow/build/fund` | ✅ | Build `escrow.fund` |

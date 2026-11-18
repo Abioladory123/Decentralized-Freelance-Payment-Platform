@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   authenticate,
   buildJobsQuery,
+  cancelJob,
   clearAuthToken,
   createDispute,
   createJob,
@@ -698,5 +699,20 @@ describe("submitProposal and proposals API (Issue #63)", () => {
     expect(url).toContain("/api/jobs/job-1/assign");
     expect(init.method).toBe("PUT");
     expect(JSON.parse(init.body as string)).toEqual({ freelancerAddress: "GABCDEF" });
+  });
+
+  it("cancels an unfunded job with a bearer token", async () => {
+    const fetchMock = vi.fn(async () =>
+      new Response(JSON.stringify({ id: "job-1", status: "CANCELLED" }), { status: 200 }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const updated = await cancelJob("job-1", "jwt-1");
+
+    expect(updated.status).toBe("CANCELLED");
+    const [url, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
+    expect(url).toContain("/api/jobs/job-1/cancel");
+    expect(init.method).toBe("POST");
+    expect((init.headers as Record<string, string>).Authorization).toBe("Bearer jwt-1");
   });
 });

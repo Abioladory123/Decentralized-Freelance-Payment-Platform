@@ -23,6 +23,7 @@ import JobListSkeleton from "../components/JobListSkeleton";
 import {
   assignFreelancer,
   authenticate,
+  cancelJob,
   fetchJobs,
   fetchProposals,
   fetchReminders,
@@ -39,7 +40,15 @@ import { parseEscrowId } from "../lib/escrowId";
 import { formatDate, formatRemaining } from "../lib/time";
 
 const PAGE_SIZE = 10;
-const STATUSES = ["CREATED", "FUNDED", "ACTIVE", "COMPLETED", "DISPUTED", "REFUNDED"];
+const STATUSES = [
+  "CREATED",
+  "FUNDED",
+  "ACTIVE",
+  "COMPLETED",
+  "DISPUTED",
+  "REFUNDED",
+  "CANCELLED",
+];
 
 export default function Dashboard() {
   const { publicKey, connecting, connect, signMessage, error: walletError } = useWallet();
@@ -76,6 +85,14 @@ export default function Dashboard() {
   const [loadingApplicants, setLoadingApplicants] = useState(false);
   const [assigning, setAssigning] = useState(false);
   const [actionMessage, setActionMessage] = useState<string | null>(null);
+
+  // Cancelling an unfunded job (issue #81). The confirmation is inline rather
+  // than a `window.confirm`, so it is testable and keyboard-accessible.
+  const [confirmingCancelId, setConfirmingCancelId] = useState<string | null>(null);
+  const [cancelling, setCancelling] = useState(false);
+  const [cancelError, setCancelError] = useState<{ jobId: string; message: string } | null>(
+    null,
+  );
 
   // What actually renders: the bookmark list when "Saved only" is on (it is
   // returned complete), otherwise the paginated API list.
@@ -193,6 +210,28 @@ export default function Dashboard() {
       setProposalError(err instanceof Error ? err.message : "Failed to submit proposal");
     } finally {
       setProposalSubmitting(false);
+    }
+  }
+
+  async function handleCancel(targetJobId: string) {
+    if (!publicKey) return;
+    setCancelling(true);
+    setCancelError(null);
+    try {
+      const token = await authenticate(publicKey, signMessage);
+      await cancelJob(targetJobId, token);
+      // Remove it immediately and re-read the list; the API hides CANCELLED
+      // jobs by default, so the row must not linger (issue #81).
+      setJobs((prev) => prev.filter((entry) => entry.id !== targetJobId));
+      setConfirmingCancelId(null);
+      void load(1, false);
+    } catch (err) {
+      setCancelError({
+        jobId: targetJobId,
+        message: err instanceof Error ? err.message : "Failed to cancel the job",
+      });
+    } finally {
+      setCancelling(false);
     }
   }
 
@@ -478,6 +517,55 @@ export default function Dashboard() {
                     </button>
                   </>
                 )}
+
+                {/* A client can withdraw their own job while it is still
+                    unfunded; once an escrow exists, refund/dispute take over
+                    (issue #81). */}
+                {isClient &&
+                  job.status === "CREATED" &&
+                  (job.escrowId === null || job.escrowId === undefined) && (
+                    <div style={{ marginTop: "0.5rem" }}>
+                      {confirmingCancelId === job.id ? (
+                        <>
+                          <p className="muted" style={{ margin: "0 0 0.5rem" }}>
+                            Cancel “{job.title}”? This unfunded job will be withdrawn from
+                            the marketplace.
+                          </p>
+                          <button
+                            type="button"
+                            className="btn-primary"
+                            disabled={cancelling}
+                            aria-busy={cancelling}
+                            onClick={() => void handleCancel(job.id)}
+                          >
+                            {cancelling ? "Cancelling…" : "Confirm cancel"}
+                          </button>{" "}
+                          <button
+                            type="button"
+                            disabled={cancelling}
+                            onClick={() => setConfirmingCancelId(null)}
+                          >
+                            Keep job
+                          </button>
+                        </>
+                      ) : (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setConfirmingCancelId(job.id);
+                            setCancelError(null);
+                          }}
+                        >
+                          Cancel job
+                        </button>
+                      )}
+                      {cancelError?.jobId === job.id && (
+                        <p role="alert" className="alert alert-error">
+                          {cancelError.message}
+                        </p>
+                      )}
+                    </div>
+                  )}
 
                 {/* A freelancer may apply while the job is open and unassigned (#63). */}
                 {isOpen && !isClient && (

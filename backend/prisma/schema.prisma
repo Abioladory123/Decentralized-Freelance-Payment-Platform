@@ -96,6 +96,8 @@ enum JobStatus {
   COMPLETED
   DISPUTED
   REFUNDED
+  /// Withdrawn by the client before the escrow was funded (issue #81).
+  CANCELLED
 }
 
 // ---------------------------------------------------------------------------

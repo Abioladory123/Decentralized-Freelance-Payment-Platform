@@ -73,7 +73,15 @@ registry.registerComponent("securitySchemes", "bearerAuth", {
 // Component schemas
 // ---------------------------------------------------------------------------
 
-const jobStatus = z.enum(["CREATED", "FUNDED", "ACTIVE", "COMPLETED", "DISPUTED", "REFUNDED"]);
+const jobStatus = z.enum([
+  "CREATED",
+  "FUNDED",
+  "ACTIVE",
+  "COMPLETED",
+  "DISPUTED",
+  "REFUNDED",
+  "CANCELLED",
+]);
 const milestoneStatus = z.enum(["PENDING", "RELEASED"]);
 const disputeStatus = z.enum([
   "PENDING",
@@ -624,6 +632,24 @@ registry.registerPath({
     401: errors[401],
     403: errors[403],
     404: errors[404],
+  },
+});
+
+registry.registerPath({
+  method: "post",
+  path: "/api/jobs/{id}/cancel",
+  tags: ["Jobs"],
+  summary: "Cancel an unfunded job (client only)",
+  description:
+    "Withdraws a CREATED job that has no on-chain escrow. Cancelled jobs are hidden from the default listing; a repeat call is idempotent.",
+  security: auth,
+  request: { params: z.object({ id: z.string() }) },
+  responses: {
+    200: json(job, "The cancelled job"),
+    401: errors[401],
+    403: errors[403],
+    404: errors[404],
+    409: errors[409],
   },
 });
 
