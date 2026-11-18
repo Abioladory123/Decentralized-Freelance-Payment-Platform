@@ -32,6 +32,9 @@ const h = vi.hoisted(() => ({
   fetchMessages: vi.fn(async () => [] as unknown[]),
   sendMessage: vi.fn(),
   markMessagesRead: vi.fn(async () => 0),
+  // Dispute evidence (#78).
+  fetchDisputeEvidence: vi.fn(async () => [] as unknown[]),
+  addDisputeEvidence: vi.fn(),
 }));
 
 vi.mock("react-router-dom", () => ({
@@ -62,6 +65,8 @@ vi.mock("../lib/api", () => ({
   fetchMessages: h.fetchMessages,
   sendMessage: h.sendMessage,
   markMessagesRead: h.markMessagesRead,
+  fetchDisputeEvidence: h.fetchDisputeEvidence,
+  addDisputeEvidence: h.addDisputeEvidence,
 }));
 
 import { ContractReadError } from "../lib/errors";
@@ -142,6 +147,9 @@ beforeEach(() => {
   });
   h.linkDisputeId.mockReset();
   h.linkDisputeId.mockResolvedValue({ id: "dispute-1", onChainId: 3 });
+  h.fetchDisputeEvidence.mockReset();
+  h.fetchDisputeEvidence.mockResolvedValue([]);
+  h.addDisputeEvidence.mockReset();
 });
 
 afterEach(() => cleanup());
@@ -625,6 +633,24 @@ describe("JobDetail opening a dispute", () => {
     await waitFor(() => expect(h.escrow.openDispute).toHaveBeenCalledWith(7n, REASON));
     expect(h.createDispute).not.toHaveBeenCalled();
     await screen.findByText(/no off-chain record, so the reason was not stored/i);
+  });
+});
+
+describe("JobDetail dispute evidence (Issue #78)", () => {
+  it("shows the evidence section to a participant on a disputed job", async () => {
+    h.wallet.publicKey = CLIENT;
+    h.escrow.getEscrow.mockResolvedValue(DISPUTED);
+    h.fetchJobs.mockResolvedValue([{ id: "job-1", escrowId: 7 }]);
+    h.fetchJob.mockResolvedValue({
+      id: "job-1",
+      disputes: [{ id: "dispute-1", status: "RAISED", reason: "x" }],
+    });
+
+    render(<JobDetail />);
+
+    expect(await screen.findByRole("heading", { name: "Dispute evidence" })).toBeTruthy();
+    expect(await screen.findByText("No evidence submitted yet.")).toBeTruthy();
+    expect(h.fetchDisputeEvidence).toHaveBeenCalledWith("dispute-1", "jwt-1");
   });
 });
 

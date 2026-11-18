@@ -17,6 +17,8 @@
  * Routes:
  *   POST /api/disputes              — record the dispute (intent), build open_dispute
  *   GET  /api/disputes/:id          — dispute detail
+ *   GET  /api/disputes/:id/evidence — notes/attachments (parties + panel, #78)
+ *   POST /api/disputes/:id/evidence — add evidence before arbitration (#78)
  *   POST /api/disputes/:id/raise    — build dispute.raise (either party)
  *   POST /api/disputes/:id/sync     — record the on-chain dispute id
  *   POST /api/disputes/:id/resolve  — arbitrator resolves (builds arbitrate tx)
@@ -90,6 +92,73 @@ async function loadDispute(id: string): Promise<DisputeWithParties> {
   if (!dispute) throw new AppError(404, "Dispute not found");
   return dispute;
 }
+
+/** True when `address` is on the configured arbitration panel. Fails closed. */
+function isArbitrator(address: string): boolean {
+  const panel = parseList(config.ARBITRATOR_ADDRESSES);
+  return panel.length > 0 && isListed(address, panel);
+}
+
+// ---------------------------------------------------------------------------
+// Dispute evidence (issue #78)
+// ---------------------------------------------------------------------------
+
+/** Largest attachment accepted, matching the client's own check. */
+export const MAX_EVIDENCE_FILE_BYTES = 2 * 1024 * 1024;
+
+/** Base64 inflates by ~4/3, so a data URL may be that much larger plus its header. */
+const MAX_EVIDENCE_DATA_URL_CHARS = Math.ceil((MAX_EVIDENCE_FILE_BYTES * 4) / 3) + 4096;
+
+/** An attachment is an external http(s) link or an inline browser data URL. */
+function isAllowedEvidenceUrl(value: string): boolean {
+  if (value.startsWith("data:")) return value.length <= MAX_EVIDENCE_DATA_URL_CHARS;
+  try {
+    const url = new URL(value);
+    return url.protocol === "https:" || url.protocol === "http:";
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * One evidence submission: a note, a file attachment, or both.
+ *
+ * The file follows the Deliverable shape (`fileName`/`fileUrl`/`fileSize`), so
+ * the client can reuse its FileReader path; the size cap is enforced here as
+ * well as in the browser, because the body is user-controlled.
+ */
+export const evidenceSchema = z
+  .object({
+    note: z.string().trim().min(1).max(2000).optional(),
+    fileName: z.string().trim().min(1).max(255).optional(),
+    fileUrl: z.string().trim().min(1).optional(),
+    fileSize: z.number().int().positive().max(MAX_EVIDENCE_FILE_BYTES).optional(),
+    fileType: z.string().trim().max(120).optional(),
+  })
+  .superRefine((value, ctx) => {
+    const hasFile = Boolean(value.fileName && value.fileUrl);
+    if (!value.note && !hasFile) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "Provide a note or a file attachment",
+      });
+    }
+    if (Boolean(value.fileName) !== Boolean(value.fileUrl)) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "A file attachment needs both fileName and fileUrl",
+      });
+    }
+    if (value.fileUrl && !isAllowedEvidenceUrl(value.fileUrl)) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "fileUrl must be an http(s) or data: URL",
+      });
+    }
+  });
+
+/** The author fields every evidence read exposes, without the user's email. */
+const evidenceAuthor = { select: { stellarAddress: true, displayName: true } } as const;
 
 // POST /api/disputes
 //
@@ -165,6 +234,91 @@ disputesRouter.get("/:id", async (req, res, next) => {
     });
     if (!dispute) throw new AppError(404, "Dispute not found");
     res.json(dispute);
+  } catch (err) {
+    next(err);
+  }
+});
+
+// POST /api/disputes/:id/evidence — a party adds a note and/or attachment (#78).
+//
+// Only while the dispute is RAISED: PENDING is not a dispute yet, and once the
+// panel is reviewing (UNDER_REVIEW) or has ruled, the record is closed. Only the
+// job's two participants may write, mirroring who may raise the dispute.
+disputesRouter.post(
+  "/:id/evidence",
+  requireAuth,
+  validate(evidenceSchema),
+  async (req, res, next) => {
+    try {
+      const addr = res.locals.stellarAddress;
+      const dispute = await loadDispute(req.params.id);
+      assertParticipant(dispute, addr);
+
+      if (!dispute.onChainId) {
+        throw new AppError(409, "Dispute is not on-chain yet");
+      }
+      if (dispute.status !== "RAISED") {
+        throw new AppError(409, "Evidence can only be added before arbitration");
+      }
+
+      const author = await prisma.user.findUnique({
+        where: { stellarAddress: addr },
+        select: { id: true },
+      });
+      if (!author) throw new AppError(404, "User not found — call /api/users/auth first");
+
+      const { note, fileName, fileUrl, fileSize, fileType } = req.body as z.infer<
+        typeof evidenceSchema
+      >;
+
+      const evidence = await prisma.disputeEvidence.create({
+        data: {
+          disputeId: dispute.id,
+          authorId: author.id,
+          note: note ?? null,
+          fileName: fileName ?? null,
+          fileUrl: fileUrl ?? null,
+          fileSize: fileSize ?? null,
+          fileType: fileType ?? null,
+        },
+        include: { author: evidenceAuthor },
+      });
+
+      res.status(201).json(evidence);
+    } catch (err) {
+      next(err);
+    }
+  },
+);
+
+// GET /api/disputes/:id/evidence — what the panel reads before ruling (#78).
+//
+// Restricted to the two parties and the configured arbitrators: attachments can
+// be private work product, so this endpoint does not inherit the public read of
+// the dispute row itself. A panel allowlist that is empty grants nobody access
+// (the same fail-closed rule as `/:id/resolve`).
+disputesRouter.get("/:id/evidence", requireAuth, async (req, res, next) => {
+  try {
+    const addr = res.locals.stellarAddress;
+    const dispute = await loadDispute(req.params.id);
+
+    const isParty =
+      dispute.job.client.stellarAddress === addr ||
+      dispute.job.freelancer?.stellarAddress === addr;
+    if (!isParty && !isArbitrator(addr)) {
+      throw new AppError(403, "Only the parties or an arbitrator can view this evidence");
+    }
+
+    // Same invisibility rule as the dispute detail: a built-but-never-submitted
+    // dispute has no evidence to show.
+    if (!dispute.onChainId) throw new AppError(404, "Dispute not found");
+
+    const evidence = await prisma.disputeEvidence.findMany({
+      where: { disputeId: dispute.id },
+      include: { author: evidenceAuthor },
+      orderBy: { createdAt: "asc" },
+    });
+    res.json(evidence);
   } catch (err) {
     next(err);
   }

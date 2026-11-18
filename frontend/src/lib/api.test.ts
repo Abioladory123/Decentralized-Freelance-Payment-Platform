@@ -3,8 +3,10 @@ import {
   authenticate,
   buildJobsQuery,
   clearAuthToken,
+  addDisputeEvidence,
   createDispute,
   createJob,
+  fetchDisputeEvidence,
   fetchMessages,
   fetchRatingsReceived,
   fetchReceipt,
@@ -698,5 +700,66 @@ describe("submitProposal and proposals API (Issue #63)", () => {
     expect(url).toContain("/api/jobs/job-1/assign");
     expect(init.method).toBe("PUT");
     expect(JSON.parse(init.body as string)).toEqual({ freelancerAddress: "GABCDEF" });
+  });
+});
+
+describe("dispute evidence (#78)", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("fetches the evidence list with a bearer token", async () => {
+    const fetchMock = vi.fn(async () =>
+      new Response(JSON.stringify([{ id: "evidence-1", note: "Signed brief" }]), {
+        status: 200,
+      }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const list = await fetchDisputeEvidence("dispute-1", "jwt-1");
+
+    expect(list).toHaveLength(1);
+    expect(list[0].note).toBe("Signed brief");
+    const [url, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
+    expect(url).toContain("/api/disputes/dispute-1/evidence");
+    expect(init.method).toBeUndefined();
+    expect((init.headers as Record<string, string>).Authorization).toBe("Bearer jwt-1");
+  });
+
+  it("posts a note or attachment and returns the recorded row", async () => {
+    const fetchMock = vi.fn(async () =>
+      new Response(JSON.stringify({ id: "evidence-1", note: "Signed brief" }), {
+        status: 201,
+      }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const created = await addDisputeEvidence(
+      "dispute-1",
+      { note: "Signed brief" },
+      "jwt-1",
+    );
+
+    expect(created.id).toBe("evidence-1");
+    const [url, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
+    expect(url).toContain("/api/disputes/dispute-1/evidence");
+    expect(init.method).toBe("POST");
+    expect(JSON.parse(init.body as string)).toEqual({ note: "Signed brief" });
+  });
+
+  it("surfaces the API's error message when the record is locked", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () =>
+        new Response(
+          JSON.stringify({ error: "Evidence can only be added before arbitration" }),
+          { status: 409 },
+        ),
+      ),
+    );
+
+    await expect(
+      addDisputeEvidence("dispute-1", { note: "late" }, "jwt-1"),
+    ).rejects.toThrow("Evidence can only be added before arbitration");
   });
 });

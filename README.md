@@ -200,6 +200,8 @@ return an **unsigned XDR** for the client to sign, and never a key.
 | `POST` | `/api/escrow/sync/:jobId` | ✅ | Link an escrow id to a job |
 | `POST` | `/api/disputes` | ✅ | Build `escrow.open_dispute` and record the dispute |
 | `GET` | `/api/disputes/:id` | — | Dispute detail |
+| `GET` | `/api/disputes/:id/evidence` | ✅ parties/panel | Notes and attachments submitted before arbitration |
+| `POST` | `/api/disputes/:id/evidence` | ✅ parties | Add a note and/or attachment while the dispute is `RAISED` |
 | `POST` | `/api/disputes/:id/resolve` | ✅ + arbitrator | Build `dispute.arbitrate` |
 | `POST` | `/api/reputation` | ✅ | Build `reputation.submit` |
 | `GET` | `/api/reputation/:address` | — | Weighted aggregate reputation, mirroring `reputation.get_aggregate` |

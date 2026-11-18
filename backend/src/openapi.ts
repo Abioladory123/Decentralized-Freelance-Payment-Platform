@@ -43,6 +43,7 @@ import {
   milestonesBatchSchema,
 } from "./routes/escrow";
 import {
+  evidenceSchema,
   raiseSchema,
   resolveSchema,
   syncSchema as disputeSyncSchema,
@@ -146,6 +147,24 @@ const dispute = registry.register(
     freelancerShare: z.string().nullable(),
     createdAt: z.string().datetime(),
     resolvedAt: z.string().datetime().nullable(),
+  }),
+);
+
+const disputeEvidence = registry.register(
+  "DisputeEvidence",
+  z.object({
+    id: z.string(),
+    disputeId: z.string(),
+    note: z.string().nullable(),
+    fileName: z.string().nullable(),
+    fileUrl: z.string().nullable(),
+    fileSize: z.number().int().nullable(),
+    fileType: z.string().nullable(),
+    createdAt: z.string().datetime(),
+    author: z.object({
+      stellarAddress: z.string(),
+      displayName: z.string().nullable(),
+    }),
   }),
 );
 
@@ -857,6 +876,43 @@ registry.registerPath({
   summary: "Get a dispute with its job",
   request: { params: z.object({ id: z.string() }) },
   responses: { 200: json(dispute, "The dispute"), 404: errors[404] },
+});
+
+registry.registerPath({
+  method: "get",
+  path: "/api/disputes/{id}/evidence",
+  tags: ["Disputes"],
+  summary: "List notes and attachments attached to a dispute",
+  description:
+    "Visible to the job's client and freelancer and to configured arbitrators; everyone else receives 403.",
+  security: auth,
+  request: { params: z.object({ id: z.string() }) },
+  responses: {
+    200: json(z.array(disputeEvidence), "The evidence, oldest first"),
+    401: errors[401],
+    403: errors[403],
+    404: errors[404],
+  },
+});
+
+registry.registerPath({
+  method: "post",
+  path: "/api/disputes/{id}/evidence",
+  tags: ["Disputes"],
+  summary: "Add a note and/or attachment to a dispute (either party, before arbitration)",
+  security: auth,
+  request: {
+    params: z.object({ id: z.string() }),
+    body: { content: { "application/json": { schema: evidenceSchema } } },
+  },
+  responses: {
+    201: json(disputeEvidence, "The recorded evidence"),
+    400: errors[400],
+    401: errors[401],
+    403: errors[403],
+    404: errors[404],
+    409: errors[409],
+  },
 });
 
 registry.registerPath({

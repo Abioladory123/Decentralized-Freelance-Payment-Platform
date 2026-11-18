@@ -137,6 +137,17 @@ export interface JobApi {
   milestones?: JobMilestoneApi[];
   /** Present on the detail response; freelancer applications (issue #63). */
   proposals?: ProposalApi[];
+  /** Present on the detail response; on-chain disputes for the job (#78). */
+  disputes?: JobDisputeSummaryApi[];
+}
+
+/** The dispute fields `GET /api/jobs/:id` exposes on a job. */
+export interface JobDisputeSummaryApi {
+  id: string;
+  onChainId: string | number | null;
+  status: string;
+  reason: string;
+  createdAt?: string;
 }
 
 /** Fetch a page of jobs. Throws on a non-2xx response. */
@@ -643,6 +654,72 @@ export async function linkDisputeId(
   });
   if (!res.ok) throw new Error(`Could not record the dispute id (HTTP ${res.status})`);
   return (await res.json()) as DisputeApi;
+}
+
+// ---------------------------------------------------------------------------
+// Dispute evidence (issue #78)
+// ---------------------------------------------------------------------------
+
+/** One note/attachment a party submitted to a dispute before arbitration. */
+export interface DisputeEvidenceApi {
+  id: string;
+  disputeId: string;
+  note: string | null;
+  fileName: string | null;
+  fileUrl: string | null;
+  fileSize: number | null;
+  fileType: string | null;
+  createdAt: string;
+  author?: { stellarAddress: string; displayName?: string | null };
+}
+
+export interface AddDisputeEvidenceInput {
+  note?: string;
+  fileName?: string;
+  /** An http(s) link or a `data:` URL produced by the browser file picker. */
+  fileUrl?: string;
+  fileSize?: number;
+  fileType?: string;
+}
+
+/**
+ * The evidence on a dispute, oldest first. Readable by the job's two parties and
+ * by configured arbitrators; a third party receives a 403 from the API.
+ */
+export async function fetchDisputeEvidence(
+  disputeId: string,
+  token: string,
+): Promise<DisputeEvidenceApi[]> {
+  const res = await fetch(
+    `${API_BASE_URL}/api/disputes/${encodeURIComponent(disputeId)}/evidence`,
+    { headers: { Authorization: `Bearer ${token}` } },
+  );
+  if (!res.ok) throw new Error(`Could not load dispute evidence (HTTP ${res.status})`);
+  return (await res.json()) as DisputeEvidenceApi[];
+}
+
+/** Add a note, a file, or both to a dispute before arbitration. */
+export async function addDisputeEvidence(
+  disputeId: string,
+  input: AddDisputeEvidenceInput,
+  token: string,
+): Promise<DisputeEvidenceApi> {
+  const res = await fetch(
+    `${API_BASE_URL}/api/disputes/${encodeURIComponent(disputeId)}/evidence`,
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify(input),
+    },
+  );
+  if (!res.ok) {
+    const errorData = (await res.json().catch(() => null)) as { error?: string } | null;
+    throw new Error(errorData?.error ?? `Could not add dispute evidence (HTTP ${res.status})`);
+  }
+  return (await res.json()) as DisputeEvidenceApi;
 }
 
 // ---------------------------------------------------------------------------
