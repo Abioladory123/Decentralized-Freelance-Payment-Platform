@@ -27,6 +27,8 @@ export interface Toast {
   message: string;
   /** Transaction hash, known once the transaction has been submitted. */
   hash?: string;
+  /** Unsigned or in-flight transaction XDR for mobile signing fallback (SEP-0007). */
+  xdr?: string;
 }
 
 /** How long a toast stays on screen once it reaches a terminal stage. */
@@ -42,7 +44,13 @@ export interface ToastContextValue {
   /** Start a toast and return the id used to advance it through the stages. */
   start: (message: string) => string;
   /** Advance a toast; `hash` is recorded once the transaction exists. */
-  update: (id: string, status: ToastStatus, message?: string, hash?: string) => void;
+  update: (
+    id: string,
+    status: ToastStatus,
+    message?: string,
+    hash?: string,
+    xdr?: string,
+  ) => void;
   /** Remove a toast. */
   dismiss: (id: string) => void;
 }

@@ -15,6 +15,7 @@
 import { SorobanRpc } from "@stellar/stellar-sdk";
 import { config } from "../config";
 import { prisma } from "../db";
+import { setIndexerMetrics } from "./metrics";
 
 export interface IndexerAlertOptions {
   cursorLedger?: number;
@@ -122,6 +123,9 @@ export async function checkIndexerLagAlert(
   const lagAlertTriggered = lag > lagThreshold;
   const deadLetterAlertTriggered = deadLetterCount >= deadLetterThreshold;
   const alertsSent: string[] = [];
+
+  // Update Prometheus metrics (issue #305)
+  setIndexerMetrics({ cursorLedger, latestLedger, lag, deadLetterCount });
 
   if (lagAlertTriggered || deadLetterAlertTriggered) {
     const issues: string[] = [];

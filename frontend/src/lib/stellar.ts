@@ -313,3 +313,39 @@ export async function pollTransaction(
   }
   throw new Error(`Transaction ${hash} not confirmed after ${attempts} attempts`);
 }
+
+/**
+ * Generate a SEP-0007 transaction signing URI (issue #312).
+ * Scheme: web+stellar:tx?xdr=<url-encoded-xdr>
+ * Enables mobile wallet signing fallback (e.g. LOBSTR, Solar).
+ */
+export function generateSep0007Uri(
+  xdrString: string,
+  options?: { pubkey?: string; callback?: string },
+): string {
+  const params = new URLSearchParams();
+  params.set("xdr", xdrString);
+  if (options?.pubkey) {
+    params.set("pubkey", options.pubkey);
+  }
+  if (options?.callback) {
+    params.set("callback", options.callback);
+  }
+  return `web+stellar:tx?${params.toString()}`;
+}
+
+/**
+ * Safely extract the transaction hash from an XDR string without requiring signatures.
+ * In the Stellar protocol, transaction hashes are derived from the transaction envelope body
+ * and network passphrase, remaining invariant before and after signing.
+ */
+export function getTransactionHashFromXdr(
+  xdrString: string,
+  passphrase = networkPassphrase,
+): string | null {
+  try {
+    return TransactionBuilder.fromXDR(xdrString, passphrase).hash().toString("hex");
+  } catch {
+    return null;
+  }
+}

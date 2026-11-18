@@ -5,14 +5,15 @@
 #
 # Usage:
 #   scripts/deploy_testnet.sh          # once, to deploy + initialize
-#   scripts/demo_testnet.sh            # then run the demo
+#   scripts/demo_testnet.sh            # then run the demo (default: XLM)
+#   scripts/demo_testnet.sh --usdc     # or run with USDC SAC
 #
 # Environment variables:
 #   NETWORK           – stellar network (default: testnet)
 #   IDENTITY          – funded identity used as the client (default: deployer)
 #   FREELANCER        – public key of the freelancer (default: a generated identity)
-#   TOKEN_CONTRACT_ID – SAC to pay with. Defaults to the testnet XLM SAC so the
-#                       demo runs without needing Circle testnet USDC.
+#   USE_USDC          – set to 1 to use USDC SAC
+#   TOKEN_CONTRACT_ID – SAC to pay with. Defaults to testnet XLM SAC or USDC SAC.
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -42,10 +43,34 @@ if ! stellar keys address "$FREELANCER_IDENTITY" >/dev/null 2>&1; then
 fi
 FREELANCER="$(stellar keys address "$FREELANCER_IDENTITY")"
 
-TOKEN="${TOKEN_CONTRACT_ID:-$CONTRACT_USDC}"
+USE_USDC="${USE_USDC:-0}"
+if [ "${1:-}" = "--usdc" ]; then
+  USE_USDC=1
+fi
+
+TOKEN="${TOKEN_CONTRACT_ID:-}"
 if [ -z "$TOKEN" ]; then
-  TOKEN="$(stellar contract id asset --asset native --network "$NETWORK")"
-  echo "==> No USDC configured; using testnet XLM SAC: $TOKEN"
+  if [ "$USE_USDC" = "1" ]; then
+    if [ -n "$CONTRACT_USDC" ]; then
+      TOKEN="$CONTRACT_USDC"
+      echo "==> Using configured testnet USDC SAC: $TOKEN"
+    else
+      echo "==> Resolving mock USDC SAC..."
+      if ! stellar keys address usdc-issuer >/dev/null 2>&1; then
+        echo "    generating usdc-issuer identity..."
+        stellar keys generate usdc-issuer --network "$NETWORK" --fund
+      fi
+      ISSUER="$(stellar keys address usdc-issuer)"
+      TOKEN="$(stellar contract id asset --asset "USDC:$ISSUER" --network "$NETWORK")"
+      stellar contract asset deploy --asset "USDC:$ISSUER" --source usdc-issuer --network "$NETWORK" >/dev/null 2>&1 || true
+      echo "    minting 1,000 mock USDC to client ($CLIENT)..."
+      stellar contract invoke --id "$TOKEN" --source usdc-issuer --network "$NETWORK" -- mint --to "$CLIENT" --amount 10000000000 >/dev/null 2>&1 || true
+      echo "==> Using mock USDC SAC: $TOKEN"
+    fi
+  else
+    TOKEN="$(stellar contract id asset --asset native --network "$NETWORK")"
+    echo "==> No USDC requested; using testnet native XLM SAC: $TOKEN"
+  fi
 fi
 
 EXPIRY=$(( $(date +%s) + 3600 ))

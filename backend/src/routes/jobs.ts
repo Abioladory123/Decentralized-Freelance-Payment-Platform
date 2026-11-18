@@ -40,6 +40,7 @@ import {
   listJobsQuerySchema,
 } from "../lib/schemas";
 import { isSkillTag, SKILL_TAGS, SKILL_TAG_SLUGS } from "../lib/tags";
+import { isListed, parseList } from "../lib/access";
 
 export const jobsRouter = Router();
 

@@ -68,6 +68,7 @@ import {
   maskAddresses,
 } from "./lib/notifications";
 import { dispatchWebhooksForEvent } from "./lib/webhooks";
+import { checkIndexerLagAlert } from "./lib/alerts";
 
 const CURSOR_ID = "main";
 export const EVENT_PAGE_LIMIT = 100;
