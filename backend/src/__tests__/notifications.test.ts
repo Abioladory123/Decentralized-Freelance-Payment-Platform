@@ -44,12 +44,40 @@ vi.mock("../db", () => {
         }),
       },
       notification: {
-        findMany: vi.fn(async ({ where }: { where: { userId: string; read?: boolean } }) => {
-          return fakeNotifications.filter((n) => {
+        findMany: vi.fn(async ({
+          where,
+          cursor,
+          skip,
+          take,
+        }: {
+          where: { userId: string; read?: boolean };
+          cursor?: { id: string };
+          skip?: number;
+          take?: number;
+          orderBy?: { createdAt: "asc" | "desc" };
+        }) => {
+          let list = fakeNotifications.filter((n) => {
             if (n.userId !== where.userId) return false;
             if (where.read !== undefined && n.read !== where.read) return false;
             return true;
           });
+
+          // Sort by createdAt descending
+          list.sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime());
+
+          if (cursor) {
+            const index = list.findIndex((n) => n.id === cursor.id);
+            if (index !== -1) {
+              const start = index + (skip ?? 0);
+              list = list.slice(start);
+            }
+          }
+
+          if (take !== undefined) {
+            list = list.slice(0, take);
+          }
+
+          return list;
         }),
         count: vi.fn(async ({ where }: { where: { userId: string; read?: boolean } }) => {
           return fakeNotifications.filter((n) => {
@@ -287,5 +315,109 @@ describe("Notifications API (#66)", () => {
     const body = (await res.json()) as { success: boolean };
     expect(body.success).toBe(true);
     expect(fakeNotifications.every((n) => n.read)).toBe(true);
+  });
+
+  describe("cursor pagination (issue #248)", () => {
+    it("returns nextCursor when more notifications exist beyond limit", async () => {
+      const user: FakeUser = {
+        id: "u_page",
+        stellarAddress: "GBPAGEUSER1111111111111111111111111111111111111111111111",
+      };
+      fakeUsers.push(user);
+
+      // Create 3 notifications with distinct timestamps
+      const now = Date.now();
+      for (let i = 1; i <= 3; i++) {
+        fakeNotifications.push({
+          id: `notif-page-${i}`,
+          userId: user.id,
+          jobId: `job-${i}`,
+          type: "FUNDED",
+          title: `Notification ${i}`,
+          message: `Message ${i}`,
+          read: false,
+          createdAt: new Date(now + i * 1000), // higher i = newer
+        });
+      }
+
+      const token = await makeToken(user.stellarAddress);
+
+      // Fetch first page with limit=2 (descending order: notif-page-3, notif-page-2)
+      const res = await fetch(`${baseUrl}/api/notifications?limit=2`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      expect(res.status).toBe(200);
+      const data = (await res.json()) as {
+        notifications: FakeNotification[];
+        unreadCount: number;
+        nextCursor: string | null;
+      };
+
+      expect(data.notifications).toHaveLength(2);
+      expect(data.notifications[0].id).toBe("notif-page-3");
+      expect(data.notifications[1].id).toBe("notif-page-2");
+      expect(data.nextCursor).toBe("notif-page-2");
+
+      // Fetch second page using nextCursor
+      const res2 = await fetch(`${baseUrl}/api/notifications?limit=2&cursor=${data.nextCursor}`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      expect(res2.status).toBe(200);
+      const data2 = (await res2.json()) as {
+        notifications: FakeNotification[];
+        unreadCount: number;
+        nextCursor: string | null;
+      };
+
+      expect(data2.notifications).toHaveLength(1);
+      expect(data2.notifications[0].id).toBe("notif-page-1");
+      expect(data2.nextCursor).toBeNull();
+    });
+
+    it("defaults to limit=50 and returns null nextCursor when results do not exceed limit", async () => {
+      const user: FakeUser = {
+        id: "u_page_single",
+        stellarAddress: "GBSINGLEUSER11111111111111111111111111111111111111111111",
+      };
+      fakeUsers.push(user);
+      fakeNotifications.push({
+        id: "single-notif",
+        userId: user.id,
+        jobId: "j1",
+        type: "RESOLVED",
+        title: "Single",
+        message: "Single",
+        read: false,
+        createdAt: new Date(),
+      });
+
+      const token = await makeToken(user.stellarAddress);
+      const res = await fetch(`${baseUrl}/api/notifications`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      expect(res.status).toBe(200);
+      const data = (await res.json()) as {
+        notifications: FakeNotification[];
+        unreadCount: number;
+        nextCursor: string | null;
+      };
+
+      expect(data.notifications).toHaveLength(1);
+      expect(data.nextCursor).toBeNull();
+    });
+
+    it("rejects invalid limit parameter with 400", async () => {
+      const user: FakeUser = {
+        id: "u_invalid",
+        stellarAddress: "GBINVALIDUSER1111111111111111111111111111111111111111111",
+      };
+      fakeUsers.push(user);
+
+      const token = await makeToken(user.stellarAddress);
+      const res = await fetch(`${baseUrl}/api/notifications?limit=-5`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      expect(res.status).toBe(400);
+    });
   });
 });

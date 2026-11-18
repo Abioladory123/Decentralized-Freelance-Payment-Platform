@@ -25,21 +25,43 @@ notificationsRouter.get("/", requireAuth, async (req, res, next) => {
 
     const unreadOnly = req.query.unread === "true";
 
-    const [notifications, unreadCount] = await Promise.all([
+    let limit = 50;
+    if (req.query.limit !== undefined) {
+      const parsedLimit = parseInt(String(req.query.limit), 10);
+      if (isNaN(parsedLimit) || parsedLimit < 1) {
+        throw new AppError(400, "Invalid limit parameter");
+      }
+      limit = Math.min(parsedLimit, 100);
+    }
+
+    const cursor =
+      typeof req.query.cursor === "string" && req.query.cursor.trim() !== ""
+        ? req.query.cursor.trim()
+        : undefined;
+
+    const [rawNotifications, unreadCount] = await Promise.all([
       prisma.notification.findMany({
         where: {
           userId: user.id,
           ...(unreadOnly ? { read: false } : {}),
         },
+        ...(cursor ? { cursor: { id: cursor }, skip: 1 } : {}),
         orderBy: { createdAt: "desc" },
-        take: 50,
+        take: limit + 1,
       }),
       prisma.notification.count({
         where: { userId: user.id, read: false },
       }),
     ]);
 
-    res.json({ notifications, unreadCount });
+    let nextCursor: string | null = null;
+    const notifications = [...rawNotifications];
+    if (notifications.length > limit) {
+      notifications.pop();
+      nextCursor = notifications[notifications.length - 1]?.id ?? null;
+    }
+
+    res.json({ notifications, unreadCount, nextCursor });
   } catch (err) {
     next(err);
   }

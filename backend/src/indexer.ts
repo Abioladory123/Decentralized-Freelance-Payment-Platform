@@ -222,12 +222,13 @@ export function startIndexer() {
 
   tick();
   const timer = setInterval(tick, config.INDEXER_POLL_INTERVAL_MS);
+  const retryWorker = startDeadLetterRetryWorker();
 
   return {
     stop: async () => {
       stopped = true;
       clearInterval(timer);
-      await inFlight;
+      await Promise.all([inFlight, retryWorker.stop()]);
     },
   };
 }
@@ -488,6 +489,120 @@ export function restoreDeadLetterEvent(payload: unknown): ContractEventLike {
       }`
     );
   }
+}
+
+export const MAX_DEAD_LETTER_ATTEMPTS = 5;
+export const DEAD_LETTER_BASE_BACKOFF_MS = 60_000;
+
+export interface RetryDeadLettersOptions {
+  maxAttempts?: number;
+  baseBackoffMs?: number;
+  now?: Date;
+  store?: IndexerStore;
+}
+
+/**
+ * Scheduled background retry routine for dead-letter indexer events (issue #245).
+ * Queries dead letters where attempts < maxAttempts and exponential backoff has elapsed,
+ * re-dispatches each using dispatchEvent(), removes succeeded records, and increments
+ * attempts on failure.
+ */
+export async function retryDeadLetters(options?: RetryDeadLettersOptions): Promise<{
+  retried: number;
+  succeeded: number;
+  failed: number;
+}> {
+  if (!prisma?.indexerDeadLetter?.findMany) {
+    return { retried: 0, succeeded: 0, failed: 0 };
+  }
+
+  const maxAttempts = options?.maxAttempts ?? config.DEAD_LETTER_MAX_ATTEMPTS ?? MAX_DEAD_LETTER_ATTEMPTS;
+  const baseBackoffMs = options?.baseBackoffMs ?? DEAD_LETTER_BASE_BACKOFF_MS;
+  const now = options?.now ?? new Date();
+
+  const candidates = await prisma.indexerDeadLetter.findMany({
+    where: {
+      attempts: { lt: maxAttempts },
+    },
+    orderBy: { lastSeenAt: "asc" },
+  });
+
+  const eligible = candidates.filter((row) => {
+    const backoffMs = baseBackoffMs * Math.pow(2, Math.max(0, row.attempts - 1));
+    return now.getTime() - row.lastSeenAt.getTime() >= backoffMs;
+  });
+
+  let succeeded = 0;
+  let failed = 0;
+
+  for (const row of eligible) {
+    try {
+      const event = restoreDeadLetterEvent(row.eventPayload);
+      await dispatchEvent(event, options?.store ?? prisma);
+      await prisma.indexerDeadLetter.delete({ where: { id: row.id } });
+      succeeded++;
+      console.log(`[indexer] Successfully retried dead-letter event ${row.id}`);
+    } catch (err) {
+      failed++;
+      const nextAttempts = row.attempts + 1;
+      const message = (err instanceof Error ? err.message : String(err)).slice(0, MAX_ERROR_LENGTH);
+      await prisma.indexerDeadLetter.update({
+        where: { id: row.id },
+        data: {
+          attempts: nextAttempts,
+          error: message,
+          lastSeenAt: now,
+        },
+      });
+      if (nextAttempts >= maxAttempts) {
+        console.warn(
+          `[indexer] Dead-letter event ${row.id} exhausted retries (${nextAttempts}/${maxAttempts}). Flagged for administrative inspection.`,
+        );
+      } else {
+        console.warn(
+          `[indexer] Dead-letter retry failed for event ${row.id} (attempt ${nextAttempts}/${maxAttempts}):`,
+          err,
+        );
+      }
+    }
+  }
+
+  return {
+    retried: eligible.length,
+    succeeded,
+    failed,
+  };
+}
+
+export function startDeadLetterRetryWorker(options?: {
+  intervalMs?: number;
+  maxAttempts?: number;
+  baseBackoffMs?: number;
+}): { stop: () => Promise<void> } {
+  const intervalMs = options?.intervalMs ?? config.DEAD_LETTER_RETRY_INTERVAL_MS ?? 300_000;
+  let stopped = false;
+  let inFlight: Promise<unknown> | null = null;
+
+  const tick = () => {
+    if (stopped || inFlight) return;
+    inFlight = retryDeadLetters(options)
+      .catch((err) => {
+        console.error("[indexer] Background dead-letter retry worker error:", err);
+      })
+      .finally(() => {
+        inFlight = null;
+      });
+  };
+
+  const timer = setInterval(tick, intervalMs);
+
+  return {
+    stop: async () => {
+      stopped = true;
+      clearInterval(timer);
+      await inFlight;
+    },
+  };
 }
 
 // ---------------------------------------------------------------------------

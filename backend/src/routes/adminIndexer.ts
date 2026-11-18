@@ -14,10 +14,56 @@ const requireIndexerAdmin: RequestHandler = (_req, res, next) => {
     return next(new AppError(503, "Indexer administration is unavailable: no admins configured"));
   }
   if (!isListed(res.locals.stellarAddress, admins)) {
-    return next(new AppError(403, "Only a configured admin can replay indexer events"));
+    return next(new AppError(403, "Only a configured admin can access indexer administration"));
   }
   next();
 };
+
+// GET /api/admin/indexer/dead-letters (issue #246)
+adminIndexerRouter.get("/dead-letters", requireAuth, requireIndexerAdmin, async (req, res, next) => {
+  try {
+    let limit = 50;
+    if (req.query.limit !== undefined) {
+      const parsedLimit = parseInt(String(req.query.limit), 10);
+      if (isNaN(parsedLimit) || parsedLimit < 1) {
+        throw new AppError(400, "Invalid limit parameter");
+      }
+      limit = Math.min(parsedLimit, 100);
+    }
+
+    let offset = 0;
+    if (req.query.offset !== undefined) {
+      const parsedOffset = parseInt(String(req.query.offset), 10);
+      if (isNaN(parsedOffset) || parsedOffset < 0) {
+        throw new AppError(400, "Invalid offset parameter");
+      }
+      offset = parsedOffset;
+    }
+
+    const [deadLetters, total] = await Promise.all([
+      prisma.indexerDeadLetter.findMany({
+        select: {
+          id: true,
+          ledger: true,
+          eventName: true,
+          contractId: true,
+          error: true,
+          attempts: true,
+          firstSeenAt: true,
+          lastSeenAt: true,
+        },
+        orderBy: { lastSeenAt: "desc" },
+        skip: offset,
+        take: limit,
+      }),
+      prisma.indexerDeadLetter.count(),
+    ]);
+
+    res.json({ deadLetters, total, limit, offset });
+  } catch (err) {
+    next(err);
+  }
+});
 
 async function replay(id: string): Promise<void> {
   const row = await prisma.indexerDeadLetter.findUnique({ where: { id } });
