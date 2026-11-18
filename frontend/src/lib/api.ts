@@ -41,6 +41,8 @@ export interface JobListQuery {
   freelancer?: string;
   /** Curated skill-tag slug (see `lib/tags.ts`); issue #70. */
   tag?: string;
+  /** Filter by community / grant verification status (issue #314). */
+  isVerified?: boolean;
   /** Keyword search across title + description (issue #62). */
   q?: string;
   /** `newest` | `oldest` | `amount_desc` | `amount_asc` (issue #62). */
@@ -58,6 +60,7 @@ export function buildJobsQuery(query: JobListQuery = {}): string {
   if (query.q) params.set("q", query.q);
   if (query.sort) params.set("sort", query.sort);
   if (query.tag) params.set("tag", query.tag);
+  if (query.isVerified !== undefined) params.set("isVerified", String(query.isVerified));
   if (query.page !== undefined) params.set("page", String(query.page));
   if (query.limit !== undefined) params.set("limit", String(query.limit));
   const qs = params.toString();
@@ -123,6 +126,9 @@ export interface JobApi {
   /** Curated skill-tag slugs (see lib/tags.ts); issue #70. */
   tags?: string[];
   totalAmount: string | number;
+  /** Verified ecosystem or SCF grant badge metadata (issue #314). */
+  isVerified?: boolean;
+  verificationSource?: string | null;
   /** ISO timestamp the off-chain record was created; used to order history. */
   createdAt?: string;
   client?: { stellarAddress: string; displayName?: string | null } | null;
@@ -980,4 +986,23 @@ export async function updateUserProfile(
   if (!res.ok) throw new Error(`Could not update profile (HTTP ${res.status})`);
   return (await res.json()) as UserProfileApi;
 }
+
+/** Update a job's verification status (issue #314; admin authorization required). */
+export async function verifyJob(
+  jobId: string,
+  data: { isVerified: boolean; verificationSource?: string | null },
+  token: string,
+): Promise<JobApi> {
+  const res = await fetch(`${API_BASE_URL}/api/jobs/${encodeURIComponent(jobId)}/verify`, {
+    method: "PATCH",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${token}`,
+    },
+    body: JSON.stringify(data),
+  });
+  if (!res.ok) throw new Error(`Could not update verification status (HTTP ${res.status})`);
+  return (await res.json()) as JobApi;
+}
+
 

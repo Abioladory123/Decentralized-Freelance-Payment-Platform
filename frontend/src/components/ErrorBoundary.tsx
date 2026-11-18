@@ -8,6 +8,7 @@
  */
 
 import { Component, type ErrorInfo, type ReactNode } from "react";
+import { captureFrontendError } from "../lib/monitoring";
 
 interface Props {
   children: ReactNode;
@@ -28,6 +29,7 @@ export default class ErrorBoundary extends Component<Props, State> {
     // The user gets a short message; the stack goes to the console so the
     // failure is still diagnosable (and reportable to an error tracker).
     console.error("Unhandled error while rendering", error, info.componentStack);
+    captureFrontendError(error, { componentStack: info.componentStack });
   }
 
   private readonly handleReload = (): void => {

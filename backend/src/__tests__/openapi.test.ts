@@ -62,6 +62,7 @@ async function allRouterRoutes(): Promise<string[]> {
   const { escrowRouter } = await import("../routes/escrow");
   const { disputesRouter } = await import("../routes/disputes");
   const { reputationRouter } = await import("../routes/reputation");
+  const { webhooksRouter } = await import("../routes/webhooks");
 
   return [
     ...routerRoutes(usersRouter, "/api/users"),
@@ -69,6 +70,7 @@ async function allRouterRoutes(): Promise<string[]> {
     ...routerRoutes(escrowRouter, "/api/escrow"),
     ...routerRoutes(disputesRouter, "/api/disputes"),
     ...routerRoutes(reputationRouter, "/api/reputation"),
+    ...routerRoutes(webhooksRouter, "/api/webhooks"),
   ];
 }
 
