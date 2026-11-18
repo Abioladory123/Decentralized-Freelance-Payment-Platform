@@ -43,6 +43,16 @@ const schema = z.object({
   INDEXER_LAG_ALERT_THRESHOLD: z.coerce.number().int().positive().default(1000),
   // Maximum unhandled dead-letter rows before alerting.
   DEAD_LETTER_ALERT_THRESHOLD: z.coerce.number().int().positive().default(10),
+  // Dead letter background retry settings (issue #245)
+  DEAD_LETTER_RETRY_INTERVAL_MS: z.coerce.number().int().positive().default(300_000),
+  DEAD_LETTER_MAX_ATTEMPTS: z.coerce.number().int().positive().default(5),
+  // SMTP Email Provider settings (issue #247)
+  SMTP_HOST: z.string().default(""),
+  SMTP_PORT: z.coerce.number().int().positive().default(587),
+  SMTP_USER: z.string().default(""),
+  SMTP_PASS: z.string().default(""),
+  SMTP_FROM: z.string().default(""),
+  SMTP_SECURE: z.enum(["true", "false"]).optional(),
 });
 
 const parsed = schema.safeParse(process.env);

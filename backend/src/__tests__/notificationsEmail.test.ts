@@ -3,6 +3,8 @@ import {
   EmailProvider,
   EmailMessage,
   LoggingEmailProvider,
+  SmtpEmailProvider,
+  createEmailProvider,
   getEmailProvider,
   setEmailProvider,
   notifyDisputeOpened,
@@ -217,6 +219,117 @@ describe("Email Notifications System (Issue #67)", () => {
       expect(refundEmail.subject).toContain("GBPLJ...Q75B");
       expect(refundEmail.text).not.toContain(FULL_ADDRESS);
       expect(refundEmail.text).toContain("GBPLJ...Q75B");
+    });
+  });
+
+  describe("SmtpEmailProvider (Issue #247)", () => {
+    it("dispatches emails via SMTP transporter when configured", async () => {
+      const sendMailMock = vi.fn().mockResolvedValue({ messageId: "msg-123" });
+      const fakeTransporter = {
+        sendMail: sendMailMock,
+      } as any;
+
+      const smtpProvider = new SmtpEmailProvider(
+        {
+          host: "smtp.example.com",
+          port: 587,
+          user: "user@example.com",
+          pass: "secret",
+          from: "noreply@example.com",
+          secure: false,
+        },
+        fakeTransporter,
+      );
+
+      await smtpProvider.sendEmail({
+        to: "recipient@example.com",
+        subject: "Dispute Update",
+        text: "Please review dispute",
+        html: "<p>Please review dispute</p>",
+      });
+
+      expect(sendMailMock).toHaveBeenCalledTimes(1);
+      expect(sendMailMock).toHaveBeenCalledWith({
+        from: "noreply@example.com",
+        to: "recipient@example.com",
+        subject: "Dispute Update",
+        text: "Please review dispute",
+        html: "<p>Please review dispute</p>",
+      });
+    });
+
+    it("throws when transporter fails to deliver email", async () => {
+      const sendMailMock = vi.fn().mockRejectedValue(new Error("SMTP connection failed"));
+      const fakeTransporter = {
+        sendMail: sendMailMock,
+      } as any;
+
+      const smtpProvider = new SmtpEmailProvider(
+        {
+          host: "smtp.example.com",
+          from: "noreply@example.com",
+        },
+        fakeTransporter,
+      );
+
+      await expect(
+        smtpProvider.sendEmail({
+          to: "recipient@example.com",
+          subject: "Test",
+          text: "Test",
+        }),
+      ).rejects.toThrow("SMTP connection failed");
+    });
+
+    it("initializes SmtpEmailProvider when SMTP credentials are present in config", () => {
+      const provider = createEmailProvider({
+        SMTP_HOST: "smtp.sendgrid.net",
+        SMTP_PORT: 587,
+        SMTP_USER: "apikey",
+        SMTP_PASS: "SG.12345",
+        SMTP_FROM: "no-reply@platform.io",
+      } as any);
+
+      expect(provider).toBeInstanceOf(SmtpEmailProvider);
+      expect((provider as SmtpEmailProvider).defaultFrom).toBe("no-reply@platform.io");
+    });
+
+    it("falls back cleanly to LoggingEmailProvider when SMTP credentials are missing", () => {
+      const provider = createEmailProvider({
+        SMTP_HOST: "",
+        SMTP_FROM: "",
+      } as any);
+
+      expect(provider).toBeInstanceOf(LoggingEmailProvider);
+    });
+
+    it("prevents notification failures from throwing or interrupting API caller", async () => {
+      const failingProvider: EmailProvider = {
+        sendEmail: vi.fn().mockRejectedValue(new Error("Network timeout")),
+      };
+      setEmailProvider(failingProvider);
+
+      const job: NotificationJob = {
+        id: "job_err",
+        title: "Test Job",
+        client: {
+          stellarAddress: "GCLIENT",
+          email: "client@example.com",
+          notifyOnDispute: true,
+          notifyOnRelease: true,
+          notifyOnRefund: true,
+        },
+      };
+
+      const errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+
+      // All three should resolve without throwing
+      await expect(notifyDisputeOpened(job, { reason: "test" })).resolves.not.toThrow();
+      await expect(notifyMilestoneReleased(job, { index: 0, amount: "100" })).resolves.not.toThrow();
+      await expect(notifyEscrowRefunded(job, { reason: "test" })).resolves.not.toThrow();
+
+      expect(errSpy).toHaveBeenCalledTimes(3);
+      errSpy.mockRestore();
     });
   });
 });

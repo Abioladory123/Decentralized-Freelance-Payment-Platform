@@ -9,6 +9,9 @@
  * Provides an EmailProvider interface with a LoggingEmailProvider fallback in dev/test.
  */
 
+import nodemailer, { type Transporter } from "nodemailer";
+import { config } from "../config";
+
 export interface EmailMessage {
   to: string;
   subject: string;
@@ -31,7 +34,69 @@ export class LoggingEmailProvider implements EmailProvider {
   }
 }
 
-let activeEmailProvider: EmailProvider = new LoggingEmailProvider();
+export interface SmtpProviderOptions {
+  host: string;
+  port?: number;
+  user?: string;
+  pass?: string;
+  from: string;
+  secure?: boolean;
+}
+
+export class SmtpEmailProvider implements EmailProvider {
+  public transporter: Transporter;
+  public defaultFrom: string;
+
+  constructor(options: SmtpProviderOptions, transporter?: Transporter) {
+    this.defaultFrom = options.from;
+    this.transporter =
+      transporter ??
+      nodemailer.createTransport({
+        host: options.host,
+        port: options.port ?? 587,
+        secure: options.secure ?? (options.port === 465),
+        auth:
+          options.user && options.pass
+            ? {
+                user: options.user,
+                pass: options.pass,
+              }
+            : undefined,
+      });
+  }
+
+  async sendEmail(message: EmailMessage): Promise<void> {
+    try {
+      await this.transporter.sendMail({
+        from: this.defaultFrom,
+        to: message.to,
+        subject: message.subject,
+        text: message.text,
+        html: message.html,
+      });
+    } catch (err) {
+      console.error(`[EmailProvider:SMTP] Failed to send email to ${message.to}:`, err);
+      throw err;
+    }
+  }
+}
+
+export function createEmailProvider(customConfig?: Partial<typeof config>): EmailProvider {
+  const c = customConfig ?? config;
+  if (c?.SMTP_HOST && c?.SMTP_FROM) {
+    return new SmtpEmailProvider({
+      host: c.SMTP_HOST,
+      port: c.SMTP_PORT,
+      user: c.SMTP_USER || undefined,
+      pass: c.SMTP_PASS || undefined,
+      from: c.SMTP_FROM,
+      secure: c.SMTP_SECURE === "true" || c.SMTP_PORT === 465,
+    });
+  }
+  return new LoggingEmailProvider();
+}
+
+let activeEmailProvider: EmailProvider = createEmailProvider();
 
 export function getEmailProvider(): EmailProvider {
   return activeEmailProvider;
@@ -104,11 +169,15 @@ export async function notifyDisputeOpened(
       .filter(Boolean)
       .join("\n");
 
-    await provider.sendEmail({
-      to: party.email!,
-      subject: maskAddresses(`[Notification] Dispute Opened: ${job.title}`),
-      text,
-    });
+    try {
+      await provider.sendEmail({
+        to: party.email!,
+        subject: maskAddresses(`[Notification] Dispute Opened: ${job.title}`),
+        text,
+      });
+    } catch (err) {
+      console.error(`[notifications] Failed to send dispute email to ${party.email}:`, err);
+    }
   }
 }
 
@@ -139,11 +208,15 @@ export async function notifyMilestoneReleased(
       .filter(Boolean)
       .join("\n");
 
-    await provider.sendEmail({
-      to: party.email!,
-      subject: maskAddresses(`[Notification] Milestone Released: ${job.title}`),
-      text,
-    });
+    try {
+      await provider.sendEmail({
+        to: party.email!,
+        subject: maskAddresses(`[Notification] Milestone Released: ${job.title}`),
+        text,
+      });
+    } catch (err) {
+      console.error(`[notifications] Failed to send milestone released email to ${party.email}:`, err);
+    }
   }
 }
 
@@ -175,10 +248,14 @@ export async function notifyEscrowRefunded(
       .filter(Boolean)
       .join("\n");
 
-    await provider.sendEmail({
-      to: party.email!,
-      subject: maskAddresses(`[Notification] Escrow Refunded: ${job.title}`),
-      text,
-    });
+    try {
+      await provider.sendEmail({
+        to: party.email!,
+        subject: maskAddresses(`[Notification] Escrow Refunded: ${job.title}`),
+        text,
+      });
+    } catch (err) {
+      console.error(`[notifications] Failed to send escrow refunded email to ${party.email}:`, err);
+    }
   }
 }

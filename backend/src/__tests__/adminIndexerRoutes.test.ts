@@ -9,6 +9,7 @@ const h = vi.hoisted(() => ({
   findUnique: vi.fn(),
   findMany: vi.fn(),
   delete: vi.fn(),
+  count: vi.fn(),
   restore: vi.fn(),
   dispatch: vi.fn(),
   userFindUnique: vi.fn(),
@@ -27,6 +28,7 @@ vi.mock("../db", () => ({
       findUnique: h.findUnique,
       findMany: h.findMany,
       delete: h.delete,
+      count: h.count,
     },
     // `requireAuth` loads the caller's current session before the admin guard.
     user: { findUnique: h.userFindUnique },
@@ -66,6 +68,7 @@ beforeEach(() => {
   h.findUnique.mockReset();
   h.findMany.mockReset();
   h.delete.mockReset();
+  h.count.mockReset();
   h.restore.mockReset();
   h.dispatch.mockReset();
   h.userFindUnique.mockReset();
@@ -77,6 +80,18 @@ async function tokenFor(address: string): Promise<string> {
     .setProtectedHeader({ alg: "HS256" })
     .setExpirationTime("1h")
     .sign(new TextEncoder().encode(h.secret));
+}
+
+async function get(path: string, address?: string) {
+  const headers: Record<string, string> = {};
+  if (address) {
+    headers.Authorization = `Bearer ${await tokenFor(address)}`;
+  }
+  const res = await fetch(`${baseUrl}/api/admin/indexer${path}`, {
+    method: "GET",
+    headers,
+  });
+  return { status: res.status, body: await res.json() };
 }
 
 async function post(path: string, address: string) {
@@ -144,5 +159,67 @@ describe("admin indexer replay routes", () => {
 
     expect(res.status).toBe(403);
     expect(h.findMany).not.toHaveBeenCalled();
+  });
+
+  describe("GET /api/admin/indexer/dead-letters (issue #246)", () => {
+    it("allows indexer admin to query dead letters with pagination and sorting", async () => {
+      const mockLetters = [
+        {
+          id: "evt-1",
+          ledger: 12345,
+          eventName: "created",
+          contractId: "C123",
+          error: "Transient db error",
+          attempts: 2,
+          firstSeenAt: new Date("2026-11-01T00:00:00Z").toISOString(),
+          lastSeenAt: new Date("2026-11-01T00:10:00Z").toISOString(),
+        },
+      ];
+      h.findMany.mockResolvedValue(mockLetters);
+      h.count.mockResolvedValue(1);
+
+      const res = await get("/dead-letters?limit=10&offset=0", h.admin);
+
+      expect(res.status).toBe(200);
+      expect(res.body).toEqual({
+        deadLetters: mockLetters,
+        total: 1,
+        limit: 10,
+        offset: 0,
+      });
+      expect(h.findMany).toHaveBeenCalledWith({
+        select: {
+          id: true,
+          ledger: true,
+          eventName: true,
+          contractId: true,
+          error: true,
+          attempts: true,
+          firstSeenAt: true,
+          lastSeenAt: true,
+        },
+        orderBy: { lastSeenAt: "desc" },
+        skip: 0,
+        take: 10,
+      });
+      expect(h.count).toHaveBeenCalled();
+    });
+
+    it("rejects non-admin caller with 403 Forbidden", async () => {
+      const res = await get("/dead-letters", "GOTHER");
+      expect(res.status).toBe(403);
+      expect(h.findMany).not.toHaveBeenCalled();
+    });
+
+    it("rejects unauthenticated request with 401 Unauthorized", async () => {
+      const res = await get("/dead-letters");
+      expect(res.status).toBe(401);
+      expect(h.findMany).not.toHaveBeenCalled();
+    });
+
+    it("rejects invalid pagination parameters with 400", async () => {
+      const res = await get("/dead-letters?limit=-1", h.admin);
+      expect(res.status).toBe(400);
+    });
   });
 });
