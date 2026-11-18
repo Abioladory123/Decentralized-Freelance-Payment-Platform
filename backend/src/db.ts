@@ -33,29 +33,68 @@ export function resetPoolStats(): void {
   poolStats.timedOutQueries = 0;
 }
 
+export interface DatabaseUrlOptions {
+  statementTimeoutMs?: number;
+  connectionLimit?: number;
+  poolTimeoutSeconds?: number;
+}
+
 /**
- * Configure PostgreSQL `statement_timeout` (in milliseconds) and connection pool parameters
- * on the database connection string.
+ * Configure PostgreSQL `statement_timeout` (in milliseconds), `connection_limit`,
+ * and `pool_timeout` parameters on the database connection string (issue #275).
  */
 export function formatDatabaseUrl(
   rawUrl?: string,
-  statementTimeoutMs: number = QUERY_TIMEOUT_MS,
+  options?: DatabaseUrlOptions | number,
 ): string | undefined {
   if (!rawUrl) return rawUrl;
+
+  const resolvedOptions: DatabaseUrlOptions =
+    typeof options === "number" ? { statementTimeoutMs: options } : (options ?? {});
+
+  const statementTimeout =
+    resolvedOptions.statementTimeoutMs ??
+    (process.env.DATABASE_TIMEOUT_MS ? parseInt(process.env.DATABASE_TIMEOUT_MS, 10) : QUERY_TIMEOUT_MS);
+
+  const connectionLimit =
+    resolvedOptions.connectionLimit ??
+    (process.env.DATABASE_POOL_SIZE ? parseInt(process.env.DATABASE_POOL_SIZE, 10) : 10);
+
+  const poolTimeout =
+    resolvedOptions.poolTimeoutSeconds ??
+    Math.max(1, Math.round(statementTimeout / 1000));
+
   try {
     const url = new URL(rawUrl);
     if (!url.searchParams.has("statement_timeout")) {
-      url.searchParams.set("statement_timeout", String(statementTimeoutMs));
+      url.searchParams.set("statement_timeout", String(statementTimeout));
+    }
+    if (!url.searchParams.has("connection_limit")) {
+      url.searchParams.set("connection_limit", String(connectionLimit));
+    }
+    if (!url.searchParams.has("pool_timeout")) {
+      url.searchParams.set("pool_timeout", String(poolTimeout));
     }
     return url.toString();
   } catch {
-    if (!rawUrl.includes("statement_timeout=")) {
-      const sep = rawUrl.includes("?") ? "&" : "?";
-      return `${rawUrl}${sep}statement_timeout=${statementTimeoutMs}`;
+    let result = rawUrl;
+    if (!result.includes("statement_timeout=")) {
+      const sep = result.includes("?") ? "&" : "?";
+      result = `${result}${sep}statement_timeout=${statementTimeout}`;
     }
-    return rawUrl;
+    if (!result.includes("connection_limit=")) {
+      const sep = result.includes("?") ? "&" : "?";
+      result = `${result}${sep}connection_limit=${connectionLimit}`;
+    }
+    if (!result.includes("pool_timeout=")) {
+      const sep = result.includes("?") ? "&" : "?";
+      result = `${result}${sep}pool_timeout=${poolTimeout}`;
+    }
+    return result;
   }
 }
+
+export { withTransactionRetry } from "./lib/transactionRetry";
 
 /**
  * Attach query execution timing, slow-query logging (> 1,000ms), and timeout abort (10s)
