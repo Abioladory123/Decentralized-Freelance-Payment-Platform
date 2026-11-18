@@ -43,6 +43,10 @@ const schema = z.object({
   INDEXER_LAG_ALERT_THRESHOLD: z.coerce.number().int().positive().default(1000),
   // Maximum unhandled dead-letter rows before alerting.
   DEAD_LETTER_ALERT_THRESHOLD: z.coerce.number().int().positive().default(10),
+  // Prometheus metrics auth configuration (issue #305)
+  METRICS_USER: z.string().default(""),
+  METRICS_PASSWORD: z.string().default(""),
+  METRICS_TOKEN: z.string().default(""),
 });
 
 const parsed = schema.safeParse(process.env);

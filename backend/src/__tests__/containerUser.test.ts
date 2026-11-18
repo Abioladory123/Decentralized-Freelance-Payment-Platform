@@ -55,8 +55,8 @@ describe("backend/Dockerfile", () => {
     expect(dockerfile).toMatch(/apk\s+add[^\n]*\btini\b/);
     // Sets tini as entrypoint
     expect(dockerfile).toMatch(/ENTRYPOINT\s+\[.*tini.*\]/);
-    // Uses exec node so the Node process receives signals directly
-    expect(dockerfile).toMatch(/CMD\s+\[.*exec\s+node\s+dist\/server\.js.*\]/);
+    // Directly runs the node server process under tini (issues #304, #302)
+    expect(dockerfile).toMatch(/CMD\s+\[.*["']?node["']?.*dist\/server\.js.*\]/);
   });
 });
 

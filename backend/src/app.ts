@@ -23,6 +23,8 @@ import { milestonesRouter } from "./routes/milestones";
 import { webhooksRouter } from "./routes/webhooks";
 import { adminIndexerRouter } from "./routes/adminIndexer";
 import { tracingMiddleware } from "./lib/tracing";
+import { metricsMiddleware } from "./lib/metrics";
+import { metricsRouter } from "./routes/metrics";
 
 /**
  * Access logging (issue #27).
@@ -63,6 +65,7 @@ export function createApp() {
   const app = express();
 
   app.use(tracingMiddleware());
+  app.use(metricsMiddleware());
 
   if (config.TRUST_PROXY > 0) {
     app.set("trust proxy", config.TRUST_PROXY);
@@ -147,6 +150,7 @@ export function createApp() {
 
   app.get("/health", handleHealth);
   app.get("/ready", handleHealth);
+  app.use("/metrics", metricsRouter);
 
   app.use("/api/users", usersRouter);
   app.use("/api/jobs", jobsRouter);

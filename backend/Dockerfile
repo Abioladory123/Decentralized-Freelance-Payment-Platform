@@ -37,5 +37,5 @@ EXPOSE 3000
 # Use tini as the init process to forward signals to the node process (issue #304)
 ENTRYPOINT ["/sbin/tini", "--"]
 
-# Apply committed migrations, then start the API with `exec` so node receives termination signals directly.
-CMD ["sh", "-c", "npx prisma migrate deploy && exec node dist/server.js"]
+# Start the node process directly under tini (issues #304, #302). Migrations are run in preDeploy / init container.
+CMD ["node", "dist/server.js"]
