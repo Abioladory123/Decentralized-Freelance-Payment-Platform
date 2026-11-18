@@ -62,3 +62,20 @@ export const requireAuth: RequestHandler = async (req, res, next) => {
     }
   }
 };
+
+export const optionalAuth: RequestHandler = async (req, res, next) => {
+  const header = req.headers.authorization;
+  if (!header?.startsWith("Bearer ")) {
+    return next();
+  }
+  try {
+    const token = header.slice(7);
+    const { payload } = await jwtVerify(token, secret);
+    if (typeof payload.sub === "string") {
+      res.locals.stellarAddress = payload.sub;
+    }
+  } catch {
+    // Ignore invalid tokens for optional authentication
+  }
+  next();
+};

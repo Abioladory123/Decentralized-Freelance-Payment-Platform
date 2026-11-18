@@ -15,9 +15,11 @@
  * before `/:id`, or they would be read as job ids.
  */
 
-import { Router } from "express";
+import { Router, type RequestHandler } from "express";
 import { z } from "zod";
+import { config } from "../config";
 import { prisma } from "../db";
+import { isListed, parseList } from "../lib/access";
 import { requireAuth } from "../middleware/auth";
 import { validate } from "../middleware/validate";
 import { AppError } from "../middleware/errorHandler";
@@ -52,7 +54,7 @@ jobsRouter.get("/", async (req, res, next) => {
     if (!parsed.success) {
       throw new AppError(400, parsed.error.issues.map((i) => i.message).join(", "));
     }
-    const { status, client, freelancer, tag, q, sort, page, limit } = parsed.data;
+    const { status, client, freelancer, tag, q, sort, page, limit, isVerified } = parsed.data;
 
     // A tag the taxonomy does not know is a caller mistake, not "no results" —
     // answering 400 with the accepted slugs keeps a typo from looking like an
@@ -95,6 +97,7 @@ jobsRouter.get("/", async (req, res, next) => {
         ...(freelancer ? { freelancer: { stellarAddress: freelancer } } : {}),
         // Postgres array containment: a job matches when its tags include this one.
         ...(tagFilter ? { tags: { has: tagFilter } } : {}),
+        ...(isVerified !== undefined ? { isVerified } : {}),
         ...searchFilter,
       },
       include: { milestones: true, client: true, freelancer: true },
@@ -486,3 +489,55 @@ jobsRouter.get("/:jobId/milestones/:index/deliverables", async (req, res, next) 
     next(err);
   }
 });
+
+export const verifyJobSchema = z.object({
+  isVerified: z.boolean().default(true),
+  verificationSource: z.string().trim().min(1).max(100).nullable().optional(),
+});
+
+const requireAdmin: RequestHandler = (_req, res, next) => {
+  const admins = parseList(config.INDEXER_ADMIN_ADDRESSES);
+  if (admins.length === 0) {
+    return next(new AppError(503, "Administration is unavailable: no admins configured"));
+  }
+  if (!isListed(res.locals.stellarAddress, admins)) {
+    return next(new AppError(403, "Only a configured admin can verify jobs"));
+  }
+  next();
+};
+
+// PATCH /api/jobs/:id/verify (issue #314)
+jobsRouter.patch(
+  "/:id/verify",
+  requireAuth,
+  requireAdmin,
+  validate(verifyJobSchema),
+  async (req, res, next) => {
+    try {
+      const { isVerified, verificationSource } = req.body;
+      const existing = await prisma.job.findUnique({
+        where: { id: req.params.id },
+      });
+      if (!existing) {
+        throw new AppError(404, "Job not found");
+      }
+
+      const updated = await prisma.job.update({
+        where: { id: req.params.id },
+        data: {
+          isVerified,
+          verificationSource: isVerified ? (verificationSource ?? "Stellar Community Fund") : null,
+        },
+        include: {
+          milestones: { orderBy: { index: "asc" } },
+          client: { select: { id: true, stellarAddress: true, displayName: true } },
+          freelancer: { select: { id: true, stellarAddress: true, displayName: true } },
+        },
+      });
+
+      res.json(updated);
+    } catch (err) {
+      next(err);
+    }
+  },
+);

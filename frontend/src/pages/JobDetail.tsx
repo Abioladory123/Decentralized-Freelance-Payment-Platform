@@ -57,6 +57,7 @@ import {
   submitRating as recordRating,
   uploadJobMilestoneDeliverable,
   type DeliverableApi,
+  type JobApi,
 } from "../lib/api";
 import { formatDeadline, formatRemaining, secondsUntil } from "../lib/time";
 import { parseEscrowId } from "../lib/escrowId";
@@ -143,12 +144,16 @@ export default function JobDetail() {
   const [uploadSuccess, setUploadSuccess] = useState<string | null>(null);
   // Cache for the off-chain job ID resolved from escrow ID to avoid redundant scans
   const [cachedJobId, setCachedJobId] = useState<string | null>(null);
+  const [offChainJob, setOffChainJob] = useState<JobApi | null>(null);
 
   const escrowId = id ? parseEscrowId(id) : null;
 
   const loadJobDeliverables = useCallback(async (jobIdToLoad: string) => {
     try {
       const job = await fetchJob(jobIdToLoad);
+      if (job) {
+        setOffChainJob(job);
+      }
       if (job?.milestones) {
         const map: Record<number, DeliverableApi[]> = {};
         for (const m of job.milestones) {
@@ -494,6 +499,9 @@ export default function JobDetail() {
           </p>
           <p>
             Status: <StatusBadge status={escrow.status} />
+            {offChainJob?.isVerified && (
+              <> <StatusBadge status={offChainJob.verificationSource ?? "Verified Grant"} /></>
+            )}
           </p>
           <p>
             Client: <AddressField address={escrow.client} label="Client address" qr />

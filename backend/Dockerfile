@@ -32,5 +32,5 @@ COPY deployments ./deployments
 USER node
 
 EXPOSE 3000
-# Apply committed migrations, then start the API.
-CMD ["sh", "-c", "npx prisma migrate deploy && node dist/server.js"]
+# Start the API. Migrations are executed in a pre-deploy phase (e.g., render.yaml preDeployCommand or init container).
+CMD ["node", "dist/server.js"]

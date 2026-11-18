@@ -20,9 +20,9 @@
 #
 # and point DATABASE_URL at it with `fromDatabase`.
 #
-# The container runs `npx prisma migrate deploy && node dist/server.js`, so
-# migrations apply on every boot.
-
+# The web service container runs `node dist/server.js`.
+# Migrations are executed in a dedicated preDeployCommand phase before
+# new web containers boot (issue #302).
 services:
   - type: web
     name: stellar-freelance-api
@@ -35,6 +35,7 @@ services:
     dockerfilePath: ./backend/Dockerfile
     dockerContext: .
     healthCheckPath: /health
+    preDeployCommand: npx prisma migrate deploy
     # Deploys are deliberate: `git push` should not roll production forward on
     # its own. Switch to `checksPass` to deploy automatically once this repo's
     # CI checks pass for the commit (`autoDeployTrigger` replaces the deprecated

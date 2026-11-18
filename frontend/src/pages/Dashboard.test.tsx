@@ -626,5 +626,30 @@ describe("Dashboard proposals and applicants (Issue #63)", () => {
       expect(h.assignFreelancer).toHaveBeenCalledWith("job-open-1", FREELANCER, "jwt-1");
     });
   });
+
+  it("renders verified badge for SCF-funded jobs (issue #314)", async () => {
+    h.wallet.publicKey = FREELANCER;
+    h.fetchJobs.mockResolvedValue([
+      job({
+        id: "job-scf-1",
+        title: "SCF Grant Job",
+        status: "ACTIVE",
+        isVerified: true,
+        verificationSource: "SCF Funded",
+      }),
+      job({
+        id: "job-standard-1",
+        title: "Standard Community Job",
+        status: "ACTIVE",
+        isVerified: false,
+      }),
+    ]);
+
+    render(<Dashboard />);
+    expect(await screen.findByText("SCF Grant Job")).toBeTruthy();
+    expect(screen.getByText("SCF Funded")).toBeTruthy();
+    expect(screen.getByText("Standard Community Job")).toBeTruthy();
+    expect(screen.queryByText("Verified Grant")).toBeNull();
+  });
 });
 
