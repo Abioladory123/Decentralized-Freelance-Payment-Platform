@@ -93,7 +93,7 @@ export default function Activity() {
       {!publicKey ? (
         <p>
           <button onClick={() => void connect()} disabled={connecting}>
-            {connecting ? "Connecting…" : "Connect your Freighter wallet"}
+            {connecting ? "Connecting…" : "Connect your wallet"}
           </button>{" "}
           to see your earnings and open escrows.
         </p>

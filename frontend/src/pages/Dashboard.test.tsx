@@ -127,7 +127,7 @@ describe("Dashboard wallet state", () => {
   it("asks an unconnected visitor to connect", async () => {
     render(<Dashboard />);
 
-    fireEvent.click(screen.getByRole("button", { name: "Connect your Freighter wallet" }));
+    fireEvent.click(screen.getByRole("button", { name: "Connect your wallet" }));
 
     await waitFor(() => expect(h.wallet.connect).toHaveBeenCalled());
   });
@@ -136,7 +136,7 @@ describe("Dashboard wallet state", () => {
     h.wallet.publicKey = CLIENT;
     render(<Dashboard />);
 
-    expect(screen.queryByRole("button", { name: /Connect your Freighter wallet/ })).toBeNull();
+    expect(screen.queryByRole("button", { name: /Connect your wallet/ })).toBeNull();
     expect(screen.getByRole("link", { name: "View reputation" }).getAttribute("href")).toBe(
       `/profile/${CLIENT}`,
     );

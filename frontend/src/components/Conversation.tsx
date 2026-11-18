@@ -113,7 +113,7 @@ export default function Conversation({ jobId }: { jobId: string }) {
 
       {!publicKey ? (
         <p>
-          <button onClick={() => void connect()}>Connect Freighter</button> to read and
+          <button onClick={() => void connect()}>Connect a wallet</button> to read and
           send messages.
         </p>
       ) : (

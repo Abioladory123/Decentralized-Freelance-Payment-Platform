@@ -333,8 +333,8 @@ checklist, redeploy, and confirm the line is gone.
    [Redeploying the contracts](#redeploying-the-contracts)).
 3. Deploy the frontend (step 2) with `VITE_API_URL` pointing at the backend.
 4. Add `CORS_ORIGIN` = the frontend origin to the backend and restart it.
-5. Smoke-test in the browser with Freighter set to **Testnet**: connect, post a
-   job, fund it, release a milestone.
+5. Smoke-test in the browser with Freighter or LOBSTR set to **Testnet**: pick
+   the wallet, connect, post a job, fund it, release a milestone.
 
 Contract ids and `VITE_*` values are baked in at build time, so if you redeploy
 the contracts you must restart the backend and rebuild the frontend.

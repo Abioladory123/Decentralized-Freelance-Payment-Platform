@@ -204,7 +204,7 @@ describe("Profile reputation", () => {
 
     expect(await summary("Rating: 4.50 / 5 from 2 review(s)")).toBeTruthy();
     expect(screen.getByText(ADDRESS)).toBeTruthy();
-    expect(screen.queryByRole("button", { name: "Connect Freighter" })).toBeNull();
+    expect(screen.queryByRole("button", { name: /Connect .*wallet/i })).toBeNull();
     expect(h.wallet.connect).not.toHaveBeenCalled();
   });
 
