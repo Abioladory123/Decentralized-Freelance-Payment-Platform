@@ -12,6 +12,16 @@ import { isSkillTag, MAX_JOB_TAGS, SKILL_TAG_SLUGS } from "./tags";
 import { isValidStellarAddress } from "./stellarAddress";
 
 /**
+ * Maximum lengths for free-text request fields. Without an upper bound, a
+ * client could send multi-megabyte strings, bloating memory and the database.
+ */
+export const MAX_JOB_DESCRIPTION_LENGTH = 5000;
+export const MAX_MILESTONE_DESCRIPTION_LENGTH = 1000;
+export const MAX_COVER_LETTER_LENGTH = 3000;
+export const MAX_DELIVERABLE_DESCRIPTION_LENGTH = 1000;
+export const MAX_FILE_URL_LENGTH = 2048;
+
+/**
  * A milestone amount, in whole units of the job's asset (issue #41): a
  * positive number, or a positive decimal string. The field is asset-neutral,
  * so the same schema validates an XLM job and a USDC job.
@@ -29,7 +39,7 @@ const amountSchema = z.union([
 ]);
 
 export const milestoneSchema = z.object({
-  description: z.string().optional(),
+  description: z.string().max(MAX_MILESTONE_DESCRIPTION_LENGTH).optional(),
   amount: amountSchema,
   deadline: z.string().datetime().optional(),
 });
@@ -50,7 +60,7 @@ export const jobTagsSchema = z
 
 export const createJobSchema = z.object({
   title: z.string().min(3).max(120),
-  description: z.string().min(10),
+  description: z.string().min(10).max(MAX_JOB_DESCRIPTION_LENGTH),
   milestones: z.array(milestoneSchema).min(1),
   expiresAt: z.string().datetime().optional(),
   /** Asset symbol the job pays in; must be in the registry. Defaults to USDC. */
@@ -113,7 +123,7 @@ export const transactionHistoryQuerySchema = z.object({
 });
 
 export const createProposalSchema = z.object({
-  coverLetter: z.string().min(5).max(3000).optional(),
+  coverLetter: z.string().min(5).max(MAX_COVER_LETTER_LENGTH).optional(),
   proposedRate: amountSchema.optional(),
 });
 
@@ -121,6 +131,7 @@ export const createDeliverableSchema = z.object({
   fileName: z.string().min(1).max(255),
   fileUrl: z
     .string()
+    .max(MAX_FILE_URL_LENGTH, `fileUrl must be at most ${MAX_FILE_URL_LENGTH} characters`)
     .url("fileUrl must be a valid URL")
     .refine(
       (url) => url.startsWith("https://") || url.startsWith("http://"),
@@ -128,5 +139,5 @@ export const createDeliverableSchema = z.object({
     ),
   fileSize: z.number().int().positive().optional(),
   fileType: z.string().max(100).optional(),
-  description: z.string().max(1000).optional(),
+  description: z.string().max(MAX_DELIVERABLE_DESCRIPTION_LENGTH).optional(),
 });
