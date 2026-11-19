@@ -5,6 +5,7 @@ import { config } from "./config";
 import { prisma } from "./db";
 import { startIndexer } from "./indexer";
 import { createShutdownHandler } from "./lib/shutdown";
+import { startCleanupJob } from "./lib/cleanup";
 import { verifyContractConfigurationSync } from "./lib/contractFreshness";
 
 async function main() {
@@ -34,8 +35,20 @@ async function main() {
   // The handle is what a SIGTERM uses to clear the polling interval.
   const indexer = startIndexer();
 
+  // Housekeeping: delete expired AuthNonce and UserSession rows periodically.
+  const cleanup = startCleanupJob({
+    stores: {
+      authNonce: prisma.authNonce,
+      userSession: prisma.userSession,
+    },
+    intervalMs: config.CLEANUP_INTERVAL_MS,
+  });
+
   const shutdown = createShutdownHandler({
-    stopIndexer: () => indexer.stop(),
+    stopIndexer: () => {
+      cleanup.stop();
+      return indexer.stop();
+    },
     closeServer: () =>
       new Promise<void>((resolve, reject) => {
         server.close((err) => (err ? reject(err) : resolve()));

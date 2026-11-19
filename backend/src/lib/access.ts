@@ -29,13 +29,48 @@ export function isListed(value: string | undefined, list: string[]): boolean {
 }
 
 /**
- * CORS origin matching. Origins are compared case-insensitively, and the
- * wildcard `*` (or an empty list, handled by the caller) means "no
- * restriction".
+ * CORS origin matching. Origins are compared case-insensitively.
+ *
+ * In the default (permissive) mode, which is for local development only, an
+ * empty list or the wildcard `*` means "no restriction".
+ *
+ * In `strict` mode (staging and production) neither an empty list nor `*` is
+ * honoured: a browser origin is allowed only if it is explicitly listed.
+ * Requests with no `Origin` header (same-origin / server-to-server) are not
+ * cross-origin browser requests, so they are not restricted by CORS.
  */
-export function isAllowedOrigin(origin: string | undefined, allowed: string[]): boolean {
-  if (allowed.length === 0) return true;
-  if (allowed.includes("*")) return true;
-  if (!origin) return true; // same-origin / server-to-server requests send no Origin
-  return isListed(origin, allowed);
+export function isAllowedOrigin(
+  origin: string | undefined,
+  allowed: string[],
+  strict = false,
+): boolean {
+  if (!strict) {
+    if (allowed.length === 0) return true;
+    if (allowed.includes("*")) return true;
+  }
+  if (!origin) return true;
+  return isListed(origin, allowed.filter((entry) => entry !== "*"));
+}
+
+/**
+ * Startup check for `CORS_ORIGIN`. Returns an error message when a strict
+ * environment (production, which also covers staging deployments) would be
+ * left open to arbitrary origins, otherwise `null`.
+ */
+export function corsConfigError(
+  raw: string | undefined | null,
+  nodeEnv: string,
+): string | null {
+  if (nodeEnv !== "production") return null;
+  const origins = parseList(raw);
+  if (origins.length === 0) {
+    return (
+      "CORS_ORIGIN must be set in production. " +
+      "Set it to your frontend origin, e.g. CORS_ORIGIN=https://your-app.vercel.app"
+    );
+  }
+  if (origins.includes("*")) {
+    return "CORS_ORIGIN must not contain the wildcard '*' in production; list explicit origins.";
+  }
+  return null;
 }

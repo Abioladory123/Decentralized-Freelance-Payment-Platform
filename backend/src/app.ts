@@ -85,20 +85,17 @@ export function createApp() {
 
   app.use(helmet());
 
-  // CORS_ORIGIN is a comma-separated allowlist of browser origins. When it is
-  // unset we keep the permissive development behaviour, but saying so out loud
-  // in production beats silently exposing the API to every origin.
+  // CORS_ORIGIN is a comma-separated allowlist of browser origins. In
+  // production (and staging) config.ts refuses to start without an explicit
+  // allowlist, and `strict` here means an empty list or `*` never allows a
+  // browser origin even if that check were bypassed. Only development keeps
+  // the permissive "allow everything" behaviour.
   const allowedOrigins = parseList(config.CORS_ORIGIN);
-  if (allowedOrigins.length === 0 && config.NODE_ENV === "production") {
-    console.warn(
-      "[cors] CORS_ORIGIN is unset in production — every origin may call this API. " +
-        "Set it to your frontend origin, e.g. CORS_ORIGIN=https://your-app.vercel.app",
-    );
-  }
+  const strictCors = config.NODE_ENV === "production";
   app.use(
     cors({
       origin: (origin, callback) =>
-        isAllowedOrigin(origin ?? undefined, allowedOrigins)
+        isAllowedOrigin(origin ?? undefined, allowedOrigins, strictCors)
           ? callback(null, true)
           : callback(null, false),
     }),

@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { corsConfigError } from "./lib/access";
 
 const schema = z.object({
   PORT: z.coerce.number().default(3000),
@@ -35,8 +36,9 @@ const schema = z.object({
   // Empty means "nobody", not "everybody".
   INDEXER_ADMIN_ADDRESSES: z.string().default(""),
   // Comma-separated browser origins allowed to call the API (e.g. the Vercel
-  // frontend). Empty means "no restriction" in development, but production
-  // warns loudly because that allows every origin.
+  // frontend). Empty means "no restriction" in development only; in production
+  // (and staging, which runs with NODE_ENV=production) an empty value or a
+  // wildcard `*` is rejected at startup.
   CORS_ORIGIN: z.string().default(""),
   // Reverse proxy hop count (e.g. 1 behind Render, Heroku, or Nginx).
   // Configures Express 'trust proxy' so rate limiting keys on the real client IP.
@@ -53,11 +55,17 @@ const schema = z.object({
   METRICS_USER: z.string().optional(),
   METRICS_PASSWORD: z.string().optional(),
   METRICS_TOKEN: z.string().optional(),
+  // How often expired AuthNonce / UserSession rows are deleted (lib/cleanup.ts).
+  // Default 15 minutes; 0 disables the job.
+  CLEANUP_INTERVAL_MS: z.coerce.number().int().min(0).default(15 * 60 * 1000),
   // Prisma connection pool settings (issue #275).
   // DATABASE_POOL_SIZE controls connection_limit (default: 10 in containerized/production setups).
   // DATABASE_TIMEOUT_MS controls query statement_timeout in ms and pool_timeout (default: 10_000).
   DATABASE_POOL_SIZE: z.coerce.number().int().positive().default(10),
   DATABASE_TIMEOUT_MS: z.coerce.number().int().positive().default(10_000),
+}).superRefine((env, ctx) => {
+  const message = corsConfigError(env.CORS_ORIGIN, env.NODE_ENV);
+  if (message) ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["CORS_ORIGIN"], message });
 });
 
 const parsed = schema.safeParse(process.env);

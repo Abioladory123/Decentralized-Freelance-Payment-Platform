@@ -196,7 +196,7 @@ Build is `backend/Dockerfile`; it executes `node dist/server.js`. Attach a Postg
 | `XLM_CONTRACT_ID` | the testnet XLM SAC (stable across contract deploys, so it is committed in `render.yaml`) |
 | `ARBITRATOR_ADDRESSES` | comma-separated panel addresses allowed to call `POST /api/disputes/:id/resolve`. Set it alongside the contract ids; empty **disables** the route (it fails closed) |
 | `DEPLOYMENTS_FILE` | optional path to the deploy record for the startup freshness check; defaults to `deployments/testnet.json` |
-| `CORS_ORIGIN` | the Vercel origin, e.g. `https://your-app.vercel.app`. Empty allows every origin — production logs a warning |
+| `CORS_ORIGIN` | the Vercel origin, e.g. `https://your-app.vercel.app`. Required in production: an empty value or `*` stops the backend at startup (empty allows every origin only in development) |
 | `INDEXER_POLL_INTERVAL_MS` | `5000` is fine; raise it to reduce RPC traffic |
 | `AUTH_RATE_LIMIT_MAX` / `AUTH_RATE_LIMIT_WINDOW_MS` | Per-IP budget for each wallet-auth route, counted separately (default `10` per `60000` ms). Raise it only if a shared NAT makes legitimate logins collide |
 

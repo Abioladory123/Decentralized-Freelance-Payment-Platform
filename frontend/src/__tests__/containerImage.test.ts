@@ -53,6 +53,13 @@ describe("frontend/Dockerfile", () => {
     expect(nginxConf).toMatch(/location\s+\/api\/\s*\{\s*proxy_pass\s+http:\/\/backend:3000;/);
   });
 
+  it("sends security response headers on every response", () => {
+    expect(nginxConf).toMatch(/add_header\s+Content-Security-Policy\s+"[^"]*frame-ancestors 'none'[^"]*"\s+always;/);
+    expect(nginxConf).toMatch(/add_header\s+X-Content-Type-Options\s+"nosniff"\s+always;/);
+    expect(nginxConf).toMatch(/add_header\s+X-Frame-Options\s+"DENY"\s+always;/);
+    expect(nginxConf).toMatch(/add_header\s+Referrer-Policy\s+"strict-origin-when-cross-origin"\s+always;/);
+  });
+
   it("enables gzip compression for static text, code, and svg assets (issue #303)", () => {
     expect(nginxConf).toMatch(/^\s*gzip\s+on\s*;/m);
     expect(nginxConf).toMatch(/^\s*gzip_vary\s+on\s*;/m);

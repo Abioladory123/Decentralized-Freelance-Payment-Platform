@@ -459,6 +459,7 @@ not just a restart.
 | `ARBITRATOR_ADDRESSES` | for dispute resolution | Fallback panel for `POST /api/disputes/:id/resolve`, used when no `DISPUTE_CONTRACT_ID` is set or the on-chain panel cannot be read (the on-chain `arbitrators()` list is authoritative otherwise). **An empty panel disables the route** — it fails closed |
 | `CORS_ORIGIN` | for production | Comma-separated browser origins allowed to call the API. Empty allows every origin and logs a warning in production |
 | `INDEXER_POLL_INTERVAL_MS` | — | Defaults to `5000` |
+| `CLEANUP_INTERVAL_MS` | — | How often expired `AuthNonce` and `UserSession` rows are deleted. Defaults to `900000` (15 minutes); `0` disables the job |
 | `AUTH_RATE_LIMIT_MAX` | — | Per-IP budget for each wallet-auth route (`/api/users/challenge`, `/api/users/auth`), counted separately. Defaults to `10` |
 | `AUTH_RATE_LIMIT_WINDOW_MS` | — | Window for those budgets, in milliseconds. Defaults to `60000` |
 | `TRUST_PROXY` | — | Reverse proxy hop count (e.g. `1` behind Render/Heroku/Nginx) so rate limiting keys on real client IP. Defaults to `0` |
