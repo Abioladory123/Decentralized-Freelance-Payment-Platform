@@ -127,10 +127,19 @@ export function maskAddresses(text: string): string {
 export interface NotificationUser {
   id?: string;
   stellarAddress: string;
+  displayName?: string | null;
   email?: string | null;
   notifyOnDispute?: boolean;
   notifyOnRelease?: boolean;
   notifyOnRefund?: boolean;
+  notifyOnProposal?: boolean;
+  notifyOnAssignment?: boolean;
+}
+
+export interface NotificationProposal {
+  id?: string;
+  coverLetter?: string | null;
+  proposedRate?: string | number | { toString(): string } | null;
 }
 
 export interface NotificationJob {
@@ -257,5 +266,96 @@ export async function notifyEscrowRefunded(
     } catch (err) {
       console.error(`[notifications] Failed to send escrow refunded email to ${party.email}:`, err);
     }
+  }
+}
+
+/**
+ * Dispatches an email notification when a new proposal is submitted on a job (issue #249).
+ * Only sends to the client if they have an email set and have opted in (`notifyOnProposal: true`).
+ */
+export async function notifyProposalSubmitted(
+  job: NotificationJob,
+  proposal: NotificationProposal,
+  freelancer: NotificationUser,
+): Promise<void> {
+  const provider = getEmailProvider();
+  const client = job.client;
+  if (!client || !client.email || !client.notifyOnProposal) {
+    return;
+  }
+
+  const maskedTitle = maskAddresses(job.title);
+  const maskedFreelancer = maskAddresses(
+    freelancer.displayName
+      ? `${freelancer.displayName} (${shortAddress(freelancer.stellarAddress)})`
+      : shortAddress(freelancer.stellarAddress),
+  );
+  const maskedCover = proposal.coverLetter ? maskAddresses(proposal.coverLetter) : "";
+
+  const text = [
+    `Hello,`,
+    ``,
+    `A new proposal has been submitted for your job "${maskedTitle}".`,
+    `Freelancer: ${maskedFreelancer}`,
+    proposal.proposedRate ? `Proposed Rate: ${proposal.proposedRate.toString()}` : "",
+    maskedCover ? `Cover Letter: ${maskedCover}` : "",
+    ``,
+    `Please visit the platform to review the proposal and take action.`,
+  ]
+    .filter(Boolean)
+    .join("\n");
+
+  try {
+    await provider.sendEmail({
+      to: client.email,
+      subject: maskAddresses(`[Notification] New Proposal: ${job.title}`),
+      text,
+    });
+  } catch (err) {
+    console.error(`[notifications] Failed to send proposal notification email to ${client.email}:`, err);
+  }
+}
+
+/**
+ * Dispatches an email notification when a freelancer is assigned to a job (issue #249).
+ * Only sends to the freelancer if they have an email set and have opted in (`notifyOnAssignment: true`).
+ */
+export async function notifyJobAssigned(
+  job: NotificationJob,
+  freelancer: NotificationUser,
+): Promise<void> {
+  const provider = getEmailProvider();
+  if (!freelancer || !freelancer.email || !freelancer.notifyOnAssignment) {
+    return;
+  }
+
+  const maskedTitle = maskAddresses(job.title);
+  const maskedClient = job.client
+    ? maskAddresses(
+        job.client.displayName
+          ? `${job.client.displayName} (${shortAddress(job.client.stellarAddress)})`
+          : shortAddress(job.client.stellarAddress),
+      )
+    : "The client";
+
+  const text = [
+    `Hello,`,
+    ``,
+    `You have been assigned to the job "${maskedTitle}"!`,
+    `Client: ${maskedClient}`,
+    ``,
+    `Please visit the platform to review the job details and milestones.`,
+  ]
+    .filter(Boolean)
+    .join("\n");
+
+  try {
+    await provider.sendEmail({
+      to: freelancer.email,
+      subject: maskAddresses(`[Notification] Job Assigned: ${job.title}`),
+      text,
+    });
+  } catch (err) {
+    console.error(`[notifications] Failed to send job assignment email to ${freelancer.email}:`, err);
   }
 }

@@ -10,9 +10,13 @@ import {
   notifyDisputeOpened,
   notifyMilestoneReleased,
   notifyEscrowRefunded,
+  notifyProposalSubmitted,
+  notifyJobAssigned,
   shortAddress,
   maskAddresses,
   NotificationJob,
+  NotificationProposal,
+  NotificationUser,
 } from "../lib/notifications";
 
 class TestEmailProvider implements EmailProvider {
@@ -150,6 +154,141 @@ describe("Email Notifications System (Issue #67)", () => {
       expect(testProvider.sent[1].to).toBe("freelancer@example.com");
       expect(testProvider.sent[0].subject).toContain("Escrow Refunded: Logo Design");
       expect(testProvider.sent[0].text).toContain("Dispute timeout reached");
+    });
+  });
+
+  describe("notifyProposalSubmitted (Issue #249)", () => {
+    it("sends notification to client when proposal is submitted and client opted in", async () => {
+      const job: NotificationJob = {
+        id: "job_prop_1",
+        title: "Frontend Redesign",
+        client: {
+          stellarAddress: "GCLIENT",
+          email: "client@example.com",
+          notifyOnProposal: true,
+        },
+      };
+
+      const proposal: NotificationProposal = {
+        id: "prop_1",
+        proposedRate: "500",
+        coverLetter: "I have 5 years experience with React.",
+      };
+
+      const freelancer: NotificationUser = {
+        stellarAddress: "GFREELANCER",
+        displayName: "Alice Dev",
+      };
+
+      await notifyProposalSubmitted(job, proposal, freelancer);
+
+      expect(testProvider.sent).toHaveLength(1);
+      expect(testProvider.sent[0].to).toBe("client@example.com");
+      expect(testProvider.sent[0].subject).toContain("New Proposal: Frontend Redesign");
+      expect(testProvider.sent[0].text).toContain("Proposed Rate: 500");
+      expect(testProvider.sent[0].text).toContain("I have 5 years experience with React.");
+      expect(testProvider.sent[0].text).toContain("Alice Dev");
+    });
+
+    it("does not send email if client opted out of proposal notifications", async () => {
+      const job: NotificationJob = {
+        id: "job_prop_2",
+        title: "Frontend Redesign",
+        client: {
+          stellarAddress: "GCLIENT",
+          email: "client@example.com",
+          notifyOnProposal: false,
+        },
+      };
+
+      await notifyProposalSubmitted(
+        job,
+        { proposedRate: "500" },
+        { stellarAddress: "GFREELANCER" },
+      );
+
+      expect(testProvider.sent).toHaveLength(0);
+    });
+
+    it("does not send email if client has no email set", async () => {
+      const job: NotificationJob = {
+        id: "job_prop_3",
+        title: "Frontend Redesign",
+        client: {
+          stellarAddress: "GCLIENT",
+          email: null,
+          notifyOnProposal: true,
+        },
+      };
+
+      await notifyProposalSubmitted(
+        job,
+        { proposedRate: "500" },
+        { stellarAddress: "GFREELANCER" },
+      );
+
+      expect(testProvider.sent).toHaveLength(0);
+    });
+  });
+
+  describe("notifyJobAssigned (Issue #249)", () => {
+    it("sends notification to freelancer when assigned to a job and freelancer opted in", async () => {
+      const job: NotificationJob = {
+        id: "job_assign_1",
+        title: "Mobile App Development",
+        client: {
+          stellarAddress: "GCLIENT",
+          displayName: "Bob Client",
+        },
+      };
+
+      const freelancer: NotificationUser = {
+        stellarAddress: "GFREELANCER",
+        email: "freelancer@example.com",
+        notifyOnAssignment: true,
+      };
+
+      await notifyJobAssigned(job, freelancer);
+
+      expect(testProvider.sent).toHaveLength(1);
+      expect(testProvider.sent[0].to).toBe("freelancer@example.com");
+      expect(testProvider.sent[0].subject).toContain("Job Assigned: Mobile App Development");
+      expect(testProvider.sent[0].text).toContain("You have been assigned to the job");
+      expect(testProvider.sent[0].text).toContain("Bob Client");
+    });
+
+    it("does not send email if freelancer opted out of assignment notifications", async () => {
+      const job: NotificationJob = {
+        id: "job_assign_2",
+        title: "Mobile App Development",
+      };
+
+      const freelancer: NotificationUser = {
+        stellarAddress: "GFREELANCER",
+        email: "freelancer@example.com",
+        notifyOnAssignment: false,
+      };
+
+      await notifyJobAssigned(job, freelancer);
+
+      expect(testProvider.sent).toHaveLength(0);
+    });
+
+    it("does not send email if freelancer has no email address", async () => {
+      const job: NotificationJob = {
+        id: "job_assign_3",
+        title: "Mobile App Development",
+      };
+
+      const freelancer: NotificationUser = {
+        stellarAddress: "GFREELANCER",
+        email: null,
+        notifyOnAssignment: true,
+      };
+
+      await notifyJobAssigned(job, freelancer);
+
+      expect(testProvider.sent).toHaveLength(0);
     });
   });
 
@@ -318,17 +457,28 @@ describe("Email Notifications System (Issue #67)", () => {
           notifyOnDispute: true,
           notifyOnRelease: true,
           notifyOnRefund: true,
+          notifyOnProposal: true,
         },
+      };
+
+      const freelancer: NotificationUser = {
+        stellarAddress: "GFREELANCER",
+        email: "freelancer@example.com",
+        notifyOnAssignment: true,
       };
 
       const errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
 
-      // All three should resolve without throwing
+      // All notification functions should resolve without throwing
       await expect(notifyDisputeOpened(job, { reason: "test" })).resolves.not.toThrow();
       await expect(notifyMilestoneReleased(job, { index: 0, amount: "100" })).resolves.not.toThrow();
       await expect(notifyEscrowRefunded(job, { reason: "test" })).resolves.not.toThrow();
+      await expect(
+        notifyProposalSubmitted(job, { proposedRate: "100" }, freelancer),
+      ).resolves.not.toThrow();
+      await expect(notifyJobAssigned(job, freelancer)).resolves.not.toThrow();
 
-      expect(errSpy).toHaveBeenCalledTimes(3);
+      expect(errSpy).toHaveBeenCalledTimes(5);
       errSpy.mockRestore();
     });
   });

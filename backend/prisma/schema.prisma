@@ -22,6 +22,8 @@ model User {
   notifyOnDispute Boolean @default(false)
   notifyOnRelease Boolean @default(false)
   notifyOnRefund  Boolean @default(false)
+  notifyOnProposal Boolean @default(false)
+  notifyOnAssignment Boolean @default(false)
   createdAt    DateTime @default(now())
 
   jobsAsClient     Job[]      @relation("ClientJobs")

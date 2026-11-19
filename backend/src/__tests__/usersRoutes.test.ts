@@ -355,6 +355,8 @@ describe("GET /api/users/me/export (Issue #310)", () => {
           notifyOnDispute: true,
           notifyOnRelease: false,
           notifyOnRefund: true,
+          notifyOnProposal: true,
+          notifyOnAssignment: false,
           createdAt: new Date("2026-01-01T00:00:00.000Z"),
           jobsAsClient: [
             { id: "job-1", title: "Smart Contract Audit", milestones: [] },
@@ -456,6 +458,8 @@ describe("DELETE /api/users/me (Issue #310)", () => {
         notifyOnDispute: false,
         notifyOnRelease: false,
         notifyOnRefund: false,
+        notifyOnProposal: false,
+        notifyOnAssignment: false,
       },
     });
 
