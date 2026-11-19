@@ -38,7 +38,34 @@ export default function Conversation({ jobId }: { jobId: string }) {
   const [error, setError] = useState<string | null>(null);
   const [draft, setDraft] = useState("");
   const [sending, setSending] = useState(false);
+  const listRef = useRef<HTMLOListElement>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const isAtBottomRef = useRef(true);
+  const initialScrollDoneRef = useRef(false);
+  const userSentMessageRef = useRef(false);
+  const prevMessageIdsRef = useRef<string>("");
+
+  const checkIfAtBottom = useCallback(() => {
+    if (listRef.current && listRef.current.scrollHeight > listRef.current.clientHeight) {
+      const { scrollTop, scrollHeight, clientHeight } = listRef.current;
+      isAtBottomRef.current = scrollHeight - scrollTop - clientHeight < 60;
+    } else {
+      const windowScrollTop = window.scrollY || document.documentElement.scrollTop;
+      const windowScrollHeight = document.documentElement.scrollHeight;
+      const windowClientHeight = window.innerHeight || document.documentElement.clientHeight;
+      isAtBottomRef.current = windowScrollHeight - windowScrollTop - windowClientHeight < 60;
+    }
+  }, []);
+
+  useEffect(() => {
+    const container = listRef.current;
+    window.addEventListener("scroll", checkIfAtBottom, { passive: true });
+    container?.addEventListener("scroll", checkIfAtBottom, { passive: true });
+    return () => {
+      window.removeEventListener("scroll", checkIfAtBottom);
+      container?.removeEventListener("scroll", checkIfAtBottom);
+    };
+  }, [checkIfAtBottom]);
 
   const load = useCallback(async () => {
     if (!publicKey) return;
@@ -63,11 +90,34 @@ export default function Conversation({ jobId }: { jobId: string }) {
     void load();
   }, [load]);
 
-  // Auto-scroll to the latest message
+  // Auto-scroll logic (issue #253):
+  // 1. Auto-scroll on initial mount when messages are first loaded.
+  // 2. Auto-scroll when the user actively sends a message.
+  // 3. For polling updates: only scroll if the user is already at the bottom and new messages arrived.
+  // 4. Do not re-scroll if polling returns unchanged message list.
   useEffect(() => {
-    if (messagesEndRef.current) {
-      messagesEndRef.current.scrollIntoView({ behavior: "smooth" });
+    if (messages.length === 0 || !messagesEndRef.current) return;
+
+    const currentIds = messages.map((m) => m.id).join(",");
+    const messagesChanged = currentIds !== prevMessageIdsRef.current;
+    prevMessageIdsRef.current = currentIds;
+
+    if (!messagesChanged && initialScrollDoneRef.current) {
+      return;
     }
+
+    const shouldScroll =
+      !initialScrollDoneRef.current ||
+      userSentMessageRef.current ||
+      isAtBottomRef.current;
+
+    if (shouldScroll) {
+      messagesEndRef.current.scrollIntoView({ behavior: "smooth" });
+      isAtBottomRef.current = true;
+    }
+
+    initialScrollDoneRef.current = true;
+    userSentMessageRef.current = false;
   }, [messages]);
 
   // Poll for new messages every 5 seconds
@@ -93,6 +143,7 @@ export default function Conversation({ jobId }: { jobId: string }) {
       const sent = await sendMessage(jobId, text, token);
       // The response carries the row but not its sender relation, so tag it here
       // rather than refetching the whole conversation.
+      userSentMessageRef.current = true;
       setMessages((prev) => [...prev, { ...sent, sender: { stellarAddress: publicKey } }]);
       setDraft("");
     } catch (e) {
@@ -130,7 +181,7 @@ export default function Conversation({ jobId }: { jobId: string }) {
           )}
 
           {messages.length > 0 && (
-            <ol className="message-list">
+            <ol className="message-list" ref={listRef}>
               {messages.map((message) => {
                 const mine = message.sender?.stellarAddress === publicKey;
                 return (

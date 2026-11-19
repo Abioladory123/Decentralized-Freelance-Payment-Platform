@@ -6,7 +6,7 @@
  */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor, act } from "@testing-library/react";
 
 const ME = "GME";
 const OTHER = "GOTHER";
@@ -144,5 +144,95 @@ describe("Conversation", () => {
 
     expect(screen.getByRole("button", { name: "Connect a wallet" })).toBeTruthy();
     expect(h.fetchMessages).not.toHaveBeenCalled();
+  });
+
+  describe("Auto-scroll behavior (Issue #253)", () => {
+    it("auto-scrolls on initial messages load", async () => {
+      const scrollIntoViewMock = vi.fn();
+      Element.prototype.scrollIntoView = scrollIntoViewMock;
+      h.fetchMessages.mockResolvedValue([message()]);
+
+      render(<Conversation jobId="job-1" />);
+
+      await screen.findByText("The first milestone is ready for review");
+      expect(scrollIntoViewMock).toHaveBeenCalledTimes(1);
+      expect(scrollIntoViewMock).toHaveBeenCalledWith({ behavior: "smooth" });
+    });
+
+    it("auto-scrolls when user sends a new message", async () => {
+      const scrollIntoViewMock = vi.fn();
+      Element.prototype.scrollIntoView = scrollIntoViewMock;
+      h.fetchMessages.mockResolvedValue([message()]);
+      h.sendMessage.mockResolvedValue(
+        message({ id: "m2", body: "Here is my response", senderId: "user-me" }),
+      );
+
+      render(<Conversation jobId="job-1" />);
+      await screen.findByText("The first milestone is ready for review");
+      expect(scrollIntoViewMock).toHaveBeenCalledTimes(1);
+
+      fireEvent.change(screen.getByLabelText("Message"), {
+        target: { value: "Here is my response" },
+      });
+      fireEvent.click(screen.getByRole("button", { name: "Send" }));
+
+      await screen.findByText("Here is my response");
+      expect(scrollIntoViewMock).toHaveBeenCalledTimes(2);
+    });
+
+    it("does not re-scroll on polling updates when message list is unchanged", async () => {
+      const scrollIntoViewMock = vi.fn();
+      Element.prototype.scrollIntoView = scrollIntoViewMock;
+      h.fetchMessages.mockResolvedValue([message()]);
+
+      render(<Conversation jobId="job-1" />);
+
+      await screen.findByText("The first milestone is ready for review");
+      expect(scrollIntoViewMock).toHaveBeenCalledTimes(1);
+
+      vi.useFakeTimers();
+      // Advance timers by poll interval (5000ms) with same messages
+      await act(async () => {
+        vi.advanceTimersByTime(5000);
+      });
+      vi.useRealTimers();
+
+      // Still should only have been called once on initial load
+      expect(scrollIntoViewMock).toHaveBeenCalledTimes(1);
+    });
+
+    it("does not auto-scroll on polling update when user is scrolled up reading history", async () => {
+      const scrollIntoViewMock = vi.fn();
+      Element.prototype.scrollIntoView = scrollIntoViewMock;
+      h.fetchMessages.mockResolvedValueOnce([message({ id: "m1" })]);
+
+      const { container } = render(<Conversation jobId="job-1" />);
+      await screen.findByText("The first milestone is ready for review");
+      expect(scrollIntoViewMock).toHaveBeenCalledTimes(1);
+
+      // Simulate user scrolling up in the list container
+      const listEl = container.querySelector(".message-list");
+      if (listEl) {
+        Object.defineProperty(listEl, "scrollHeight", { value: 1000, configurable: true });
+        Object.defineProperty(listEl, "clientHeight", { value: 300, configurable: true });
+        Object.defineProperty(listEl, "scrollTop", { value: 100, configurable: true }); // Scrolled far up (> 60px from bottom)
+        fireEvent.scroll(listEl);
+      }
+
+      // Next poll returns a new message
+      h.fetchMessages.mockResolvedValueOnce([
+        message({ id: "m1" }),
+        message({ id: "m2", body: "New polled message" }),
+      ]);
+
+      vi.useFakeTimers();
+      await act(async () => {
+        vi.advanceTimersByTime(5000);
+      });
+      vi.useRealTimers();
+
+      // Should not have auto-scrolled because user is reading history
+      expect(scrollIntoViewMock).toHaveBeenCalledTimes(1);
+    });
   });
 });
