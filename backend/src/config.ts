@@ -50,6 +50,9 @@ const schema = z.object({
   METRICS_USER: z.string().optional(),
   METRICS_PASSWORD: z.string().optional(),
   METRICS_TOKEN: z.string().optional(),
+  // How often expired AuthNonce / UserSession rows are deleted (lib/cleanup.ts).
+  // Default 15 minutes; 0 disables the job.
+  CLEANUP_INTERVAL_MS: z.coerce.number().int().min(0).default(15 * 60 * 1000),
   // Prisma connection pool settings (issue #275).
   // DATABASE_POOL_SIZE controls connection_limit (default: 10 in containerized/production setups).
   // DATABASE_TIMEOUT_MS controls query statement_timeout in ms and pool_timeout (default: 10_000).
