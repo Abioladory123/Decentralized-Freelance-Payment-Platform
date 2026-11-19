@@ -59,6 +59,12 @@ const h = vi.hoisted(() => ({
   },
 }));
 
+// The panel read is its own concern (see arbitratorPanel.test.ts); stubbing it
+// keeps the on-chain `arbitrators()` simulation out of `builtTxs`.
+vi.mock("../lib/arbitratorPanel", () => ({
+  getArbitratorPanel: async () => (process.env.ARBITRATOR_ADDRESSES ?? "").split(",").filter(Boolean),
+}));
+
 vi.mock("../db", () => ({ prisma: { dispute: h.dispute, job: h.job, user: h.user } }));
 
 // `getAsset` is wrapped rather than replaced so the registry stays real for
@@ -467,6 +473,63 @@ describe("POST /api/disputes/:id/resolve", () => {
     const res = await post("/dispute_1/resolve", CLIENT, split);
 
     expect(res.status).toBe(403);
+    expect(builtTxs).toHaveLength(0);
+  });
+});
+
+describe("POST /api/disputes/:id/approve", () => {
+  const split = { clientShare: 2.5, freelancerShare: 0 };
+
+  it("builds approve with the caller as the arbitrator and the split in base units", async () => {
+    h.dispute.findUnique.mockResolvedValue(disputeRow({ onChainId: 3n, status: "RAISED" }));
+
+    const res = await post("/dispute_1/approve", ARBITRATOR, split);
+
+    expect(res.status).toBe(200);
+    expect(res.body.xdr).toBe("assembled-xdr");
+    expect(lastInvocation()).toEqual({
+      contract: ESCROW_CONTRACT,
+      name: "approve",
+      args: [3n, ARBITRATOR, 25_000_000n, 0n],
+    });
+    // A single vote changes nothing in the DB.
+    expect(h.dispute.update).not.toHaveBeenCalled();
+  });
+
+  it("refuses a non-panel caller before it builds anything", async () => {
+    h.dispute.findUnique.mockResolvedValue(disputeRow({ onChainId: 3n }));
+
+    const res = await post("/dispute_1/approve", CLIENT, split);
+
+    expect(res.status).toBe(403);
+    expect(builtTxs).toHaveLength(0);
+  });
+
+  it("refuses while the dispute has no on-chain id", async () => {
+    h.dispute.findUnique.mockResolvedValue(disputeRow());
+
+    const res = await post("/dispute_1/approve", ARBITRATOR, split);
+
+    expect(res.status).toBe(409);
+    expect(builtTxs).toHaveLength(0);
+  });
+
+  it("refuses a dispute that is already closed", async () => {
+    h.dispute.findUnique.mockResolvedValue(disputeRow({ onChainId: 3n, status: "RESOLVED" }));
+
+    const res = await post("/dispute_1/approve", ARBITRATOR, split);
+
+    expect(res.status).toBe(409);
+    expect(builtTxs).toHaveLength(0);
+  });
+
+  it("rejects a negative share with 400", async () => {
+    const res = await post("/dispute_1/approve", ARBITRATOR, {
+      clientShare: -1,
+      freelancerShare: 0,
+    });
+
+    expect(res.status).toBe(400);
     expect(builtTxs).toHaveLength(0);
   });
 });

@@ -12,7 +12,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vites
 import express from "express";
 import type { Server } from "node:http";
 
-const h = vi.hoisted(() => ({ job: { findMany: vi.fn() } }));
+const h = vi.hoisted(() => ({ job: { findMany: vi.fn(), count: vi.fn() } }));
 
 vi.mock("../db", () => ({ prisma: { job: h.job } }));
 
@@ -50,6 +50,8 @@ afterAll(async () => {
 beforeEach(() => {
   h.job.findMany.mockReset();
   h.job.findMany.mockResolvedValue([]);
+  h.job.count.mockReset();
+  h.job.count.mockResolvedValue(0);
 });
 
 async function list(query = "") {
@@ -71,7 +73,10 @@ describe("GET /api/jobs: valid filters", () => {
     const res = await list();
 
     expect(res.status).toBe(200);
-    expect(res.body).toEqual([]);
+    expect(res.body).toEqual({
+      data: [],
+      pagination: { total: 0, page: 1, limit: 20, totalPages: 0, hasMore: false },
+    });
     // Cancelled jobs are not open work, so the default list excludes them (#81).
     expect(args()).toMatchObject({
       where: { status: { not: "CANCELLED" } },

@@ -6,6 +6,7 @@ import { jobsRouter } from "../routes/jobs";
 const h = vi.hoisted(() => ({
   job: {
     findMany: vi.fn(),
+    count: vi.fn(),
   },
 }));
 
@@ -44,6 +45,8 @@ afterAll(() => {
 beforeEach(() => {
   h.job.findMany.mockReset();
   h.job.findMany.mockResolvedValue([]);
+  h.job.count.mockReset();
+  h.job.count.mockResolvedValue(0);
 });
 
 describe("GET /api/jobs search and sort (issue #62)", () => {

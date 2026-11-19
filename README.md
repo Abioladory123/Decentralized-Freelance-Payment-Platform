@@ -78,7 +78,7 @@ Honest snapshot of what works today (see [`docs/TESTNET.md`](./docs/TESTNET.md) 
 | Backend API | ✅ Routes + auth implemented; contract-event indexer syncs DB state from Soroban RPC, with a dead-letter table for events it cannot apply |
 | Job discovery / filtering | ✅ Dashboard lists jobs with status + skill-tag filters and pagination (from the backend API) |
 | Multi-arbitrator / timelocked disputes | ✅ Panel with a timelock escape hatch from `Disputed` (see [`docs/DISPUTES.md`](./docs/DISPUTES.md)) |
-| Dispute resolution authorization | ✅ `POST /api/disputes/:id/resolve` requires an `ARBITRATOR_ADDRESSES` entry, and fails closed when unset |
+| Dispute resolution authorization | ✅ `POST /api/disputes/:id/resolve` requires membership in the on-chain arbitrator panel (read from the dispute contract; `ARBITRATOR_ADDRESSES` is only the fallback), and fails closed when the panel is empty |
 | Assets beyond USDC | ✅ Registry with USDC + XLM (`docs/ASSETS.md`); any SAC can be registered |
 | Wallet auth | ✅ SEP-53 message signing verified server-side, with single-use nonces persisted in PostgreSQL |
 | USDC configuration | ❌ Not wired on testnet yet — the demo uses the XLM SAC |
@@ -181,7 +181,7 @@ return an **unsigned XDR** for the client to sign, and never a key.
 | `GET` | `/api/users/:address/transactions?page=1&limit=20` | — | Paginated indexed on-chain history for the address's escrows, with explorer links and totals |
 | `GET` | `/api/users/:address/reminders` | — | Milestone deadlines that are overdue or due soon (`?withinHours=`) |
 | `PUT` | `/api/users/me` | ✅ | Update your own profile |
-| `GET` | `/api/jobs` | — | List jobs with status + `tag` filters and pagination |
+| `GET` | `/api/jobs` | — | List jobs with status + `tag` filters and pagination. Returns `{ data, pagination: { total, page, limit, totalPages, hasMore } }` |
 | `GET` | `/api/jobs/tags` | — | The curated skill-tag taxonomy |
 | `GET` | `/api/jobs/saved` | ✅ | The caller's bookmarked jobs, newest first |
 | `POST` | `/api/jobs/:id/save` | ✅ | Bookmark a job (idempotent) |
@@ -456,7 +456,7 @@ not just a restart.
 | `REPUTATION_CONTRACT_ID` | ✅ | As above |
 | `XLM_CONTRACT_ID` | to pay in XLM | Testnet XLM SAC |
 | `USDC_CONTRACT_ID` | to pay in USDC | Empty until USDC is configured |
-| `ARBITRATOR_ADDRESSES` | for dispute resolution | Comma-separated panel addresses allowed to call `POST /api/disputes/:id/resolve`. **Empty disables the route** — it fails closed |
+| `ARBITRATOR_ADDRESSES` | for dispute resolution | Fallback panel for `POST /api/disputes/:id/resolve`, used when no `DISPUTE_CONTRACT_ID` is set or the on-chain panel cannot be read (the on-chain `arbitrators()` list is authoritative otherwise). **An empty panel disables the route** — it fails closed |
 | `CORS_ORIGIN` | for production | Comma-separated browser origins allowed to call the API. Empty allows every origin and logs a warning in production |
 | `INDEXER_POLL_INTERVAL_MS` | — | Defaults to `5000` |
 | `AUTH_RATE_LIMIT_MAX` | — | Per-IP budget for each wallet-auth route (`/api/users/challenge`, `/api/users/auth`), counted separately. Defaults to `10` |

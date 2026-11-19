@@ -8,6 +8,7 @@
  * POST /api/escrow/build/create            — build escrow.create() tx
  * POST /api/escrow/build/fund              — build escrow.fund() tx
  * POST /api/escrow/build/release           — build escrow.release_milestone() tx
+ * POST /api/escrow/build/release-partial   — build escrow.release_partial() tx
  * POST /api/escrow/build/reclaim           — build escrow.reclaim_expired() tx
  * POST /api/escrow/build/reclaim-dispute   — build escrow.reclaim_after_dispute_timeout() tx
  * POST /api/escrow/build/update-milestones — build escrow.update_milestones() tx
@@ -26,6 +27,7 @@ import {
   buildReclaimArgs,
   buildReclaimDisputeArgs,
   buildReleaseMilestoneArgs,
+  buildReleasePartialArgs,
 } from "../lib/scval";
 import { formatAmount, getAsset, sumAmounts, toBaseUnits, UnknownAssetError } from "../lib/assets";
 import { buildEscrowReceipt } from "../lib/receipt";
@@ -481,6 +483,58 @@ escrowRouter.post("/build/release", requireAuth, validate(releaseSchema), async 
     next(err);
   }
 });
+
+// POST /api/escrow/build/release-partial
+//
+// `amount` is a whole-unit figure (like the other build routes) and is converted
+// to the job's asset base units for the contract's `i128` argument. The job is
+// looked up by escrow id to learn the asset precision; the contract remains the
+// authority on the milestone state and on the amount not exceeding what is left.
+export const releasePartialSchema = z.object({
+  escrowId: escrowIdSchema,
+  milestoneIndex: z.number().int().min(0),
+  amount: z.number().positive(),
+});
+
+escrowRouter.post(
+  "/build/release-partial",
+  requireAuth,
+  validate(releasePartialSchema),
+  async (req, res, next) => {
+    try {
+      const { escrowId, milestoneIndex, amount } = req.body as z.infer<
+        typeof releasePartialSchema
+      >;
+
+      const job = await prisma.job.findUnique({
+        where: { escrowId: BigInt(escrowId) },
+        include: { client: true },
+      });
+      if (!job) throw new AppError(404, "No job is linked to that escrow id");
+      if (job.client.stellarAddress !== res.locals.stellarAddress) {
+        throw new AppError(403, "Only the client can release funds");
+      }
+
+      const asset = assetForJob(job.asset);
+      const baseAmount = toBaseUnits(amount, asset.decimals);
+      if (baseAmount <= 0n) {
+        throw new AppError(400, "Amount is too small for the asset precision");
+      }
+
+      const contract = new Contract(config.ESCROW_CONTRACT_ID);
+      const xdr = await buildTx(
+        res.locals.stellarAddress,
+        contract.call(
+          "release_partial",
+          ...buildReleasePartialArgs(escrowId, milestoneIndex, baseAmount),
+        ),
+      );
+      res.json({ xdr });
+    } catch (err) {
+      next(err);
+    }
+  },
+);
 
 // POST /api/escrow/build/reclaim
 escrowRouter.post("/build/reclaim", requireAuth, validate(z.object({ escrowId: escrowIdSchema })), async (req, res, next) => {

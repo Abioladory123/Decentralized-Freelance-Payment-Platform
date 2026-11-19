@@ -43,6 +43,7 @@ import {
   milestonesBatchSchema,
 } from "./routes/escrow";
 import {
+  approveSchema,
   evidenceSchema,
   raiseSchema,
   resolveSchema,
@@ -525,7 +526,21 @@ registry.registerPath({
   tags: ["Jobs"],
   summary: "List jobs with status filters and pagination",
   request: { query: jobListQuery },
-  responses: { 200: json(z.array(job), "A page of jobs, newest first") },
+  responses: {
+    200: json(
+      z.object({
+        data: z.array(job),
+        pagination: z.object({
+          total: z.number().int().describe("Jobs matching the filters, across all pages"),
+          page: z.number().int(),
+          limit: z.number().int(),
+          totalPages: z.number().int(),
+          hasMore: z.boolean().describe("Whether a later page has more jobs"),
+        }),
+      }),
+      "A page of jobs plus pagination metadata",
+    ),
+  },
 });
 
 registry.registerPath({
@@ -966,6 +981,27 @@ registry.registerPath({
 
 registry.registerPath({
   method: "post",
+  path: "/api/disputes/{id}/approve",
+  tags: ["Disputes"],
+  summary: "Build dispute.approve — one panel member's vote on a split (panel member only)",
+  security: auth,
+  request: {
+    params: z.object({ id: z.string() }),
+    body: { content: { "application/json": { schema: approveSchema } } },
+  },
+  responses: {
+    200: json(unsignedTransaction, "Unsigned transaction"),
+    400: errors[400],
+    401: errors[401],
+    403: errors[403],
+    404: errors[404],
+    409: errors[409],
+    503: { description: "No arbitrator panel available — approval fails closed" },
+  },
+});
+
+registry.registerPath({
+  method: "post",
   path: "/api/disputes/{id}/resolve",
   tags: ["Disputes"],
   summary: "Build dispute.arbitrate (arbitrator only)",
@@ -981,7 +1017,7 @@ registry.registerPath({
     403: errors[403],
     404: errors[404],
     409: errors[409],
-    503: { description: "No ARBITRATOR_ADDRESSES configured — resolution fails closed" },
+    503: { description: "No arbitrator panel available (empty on-chain panel and no ARBITRATOR_ADDRESSES fallback) — resolution fails closed" },
   },
 });
 

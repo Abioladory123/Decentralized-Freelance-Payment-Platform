@@ -19,11 +19,13 @@
  * Contract signatures these builders must keep matching:
  *   escrow.fund(escrow_id: u64)
  *   escrow.release_milestone(escrow_id: u64, milestone_index: u32)
+ *   escrow.release_partial(escrow_id: u64, milestone_index: u32, amount: i128)
  *   escrow.reclaim_expired(escrow_id: u64)
  *   escrow.reclaim_after_dispute_timeout(escrow_id: u64)
  *   escrow.open_dispute(escrow_id: u64, initiator: Address)
  *   reputation.submit(rater: Address, ratee: Address, escrow_id: u64, score: u32)
  *   dispute.raise(escrow_id: u64, escrow_contract: Address, raised_by: Address, reason: String)
+ *   dispute.approve(dispute_id: u64, arbitrator: Address, client_share: i128, freelancer_share: i128)
  *   dispute.arbitrate(dispute_id: u64, client_share: i128, freelancer_share: i128)
  */
 
@@ -70,6 +72,19 @@ export function buildReleaseMilestoneArgs(
   milestoneIndex: number,
 ): xdr.ScVal[] {
   return [scU64(escrowId), scU32(milestoneIndex)];
+}
+
+/**
+ * `escrow.release_partial(escrow_id, milestone_index, amount)`
+ *
+ * `amount` is in the asset's base units (the contract's `i128`).
+ */
+export function buildReleasePartialArgs(
+  escrowId: number | bigint,
+  milestoneIndex: number,
+  amount: number | bigint,
+): xdr.ScVal[] {
+  return [scU64(escrowId), scU32(milestoneIndex), scI128(amount)];
 }
 
 /** `escrow.reclaim_expired(escrow_id)` */
@@ -124,6 +139,25 @@ export function buildRaiseArgs(
     scAddress(escrowContract),
     scAddress(raisedBy),
     scString(reason),
+  ];
+}
+
+/**
+ * `dispute.approve(dispute_id, arbitrator, client_share, freelancer_share)`
+ *
+ * One panel member's vote for a split. Shares are in base units (i128).
+ */
+export function buildApproveArgs(
+  disputeId: number | bigint,
+  arbitrator: string,
+  clientShareBaseUnits: bigint,
+  freelancerShareBaseUnits: bigint,
+): xdr.ScVal[] {
+  return [
+    scU64(disputeId),
+    scAddress(arbitrator),
+    scI128(clientShareBaseUnits),
+    scI128(freelancerShareBaseUnits),
   ];
 }
 
