@@ -43,6 +43,7 @@ import {
   milestonesBatchSchema,
 } from "./routes/escrow";
 import {
+  approveSchema,
   evidenceSchema,
   raiseSchema,
   resolveSchema,
@@ -962,6 +963,27 @@ registry.registerPath({
     body: { content: { "application/json": { schema: disputeSyncSchema } } },
   },
   responses: { 200: json(dispute, "The updated dispute"), 401: errors[401], 403: errors[403], 404: errors[404] },
+});
+
+registry.registerPath({
+  method: "post",
+  path: "/api/disputes/{id}/approve",
+  tags: ["Disputes"],
+  summary: "Build dispute.approve — one panel member's vote on a split (panel member only)",
+  security: auth,
+  request: {
+    params: z.object({ id: z.string() }),
+    body: { content: { "application/json": { schema: approveSchema } } },
+  },
+  responses: {
+    200: json(unsignedTransaction, "Unsigned transaction"),
+    400: errors[400],
+    401: errors[401],
+    403: errors[403],
+    404: errors[404],
+    409: errors[409],
+    503: { description: "No arbitrator panel available — approval fails closed" },
+  },
 });
 
 registry.registerPath({

@@ -21,6 +21,7 @@
  *   POST /api/disputes/:id/evidence — add evidence before arbitration (#78)
  *   POST /api/disputes/:id/raise    — build dispute.raise (either party)
  *   POST /api/disputes/:id/sync     — record the on-chain dispute id
+ *   POST /api/disputes/:id/approve  — panel member votes a split (builds approve tx)
  *   POST /api/disputes/:id/resolve  — arbitrator resolves (builds arbitrate tx)
  *
  * Authorization: `/:id/resolve` may only be called by a member of the arbitrator
@@ -46,7 +47,12 @@ import type { Dispute, Job, User } from "@prisma/client";
 import { config } from "../config";
 import { prisma } from "../db";
 import { getAsset, toBaseUnits } from "../lib/assets";
-import { buildArbitrateArgs, buildOpenDisputeArgs, buildRaiseArgs } from "../lib/scval";
+import {
+  buildApproveArgs,
+  buildArbitrateArgs,
+  buildOpenDisputeArgs,
+  buildRaiseArgs,
+} from "../lib/scval";
 import {
   DISPUTE_ERROR_MESSAGES,
   ESCROW_ERROR_MESSAGES,
@@ -409,6 +415,71 @@ disputesRouter.post("/:id/sync", requireAuth, validate(syncSchema), async (req, 
     }
 
     res.json(updated);
+  } catch (err) {
+    next(err);
+  }
+});
+
+// POST /api/disputes/:id/approve  (panel member only)
+//
+// Multi-arbitrator flow: each panel member calls `dispute.approve` with the
+// split they back, and `arbitrate` only succeeds once `threshold` members have
+// approved that same split. The caller is always the arbitrator on the call —
+// the contract requires that address's own signature, so it is never taken from
+// the request body. Unlike `/resolve` this writes nothing to the DB: one vote
+// does not change the dispute, and the indexer records the final outcome.
+export const approveSchema = z.object({
+  clientShare: z.number().min(0),
+  freelancerShare: z.number().min(0),
+});
+
+disputesRouter.post("/:id/approve", requireAuth, validate(approveSchema), async (req, res, next) => {
+  try {
+    const { clientShare, freelancerShare } = req.body as z.infer<typeof approveSchema>;
+    const arbitrator = res.locals.stellarAddress;
+
+    // Fail closed: an empty panel grants nobody access.
+    const panel = await getArbitratorPanel();
+    if (panel.length === 0) {
+      throw new AppError(503, "Dispute approval is unavailable: no arbitrator panel configured");
+    }
+    if (!isListed(arbitrator, panel)) {
+      throw new AppError(403, "Only an arbitrator panel member can approve a dispute");
+    }
+
+    const dispute = await prisma.dispute.findUnique({
+      where: { id: req.params.id },
+      include: { job: true },
+    });
+    if (!dispute) throw new AppError(404, "Dispute not found");
+    if (!dispute.onChainId) {
+      throw new AppError(
+        409,
+        "Dispute is not on-chain yet: call POST /api/disputes/:id/raise, submit it, then POST /:id/sync",
+      );
+    }
+    // The contract accepts votes only while the dispute is open.
+    if (dispute.status !== "RAISED" && dispute.status !== "UNDER_REVIEW") {
+      throw new AppError(409, "Dispute is already closed and can no longer be voted on");
+    }
+
+    const asset = assetForJob(dispute.job.asset);
+    const disputeContract = new Contract(config.DISPUTE_CONTRACT_ID);
+    const xdr = await buildTx(
+      arbitrator,
+      disputeContract.call(
+        "approve",
+        ...buildApproveArgs(
+          dispute.onChainId,
+          arbitrator,
+          toBaseUnits(clientShare, asset.decimals),
+          toBaseUnits(freelancerShare, asset.decimals),
+        ),
+      ),
+      { messages: DISPUTE_ERROR_MESSAGES },
+    );
+
+    res.json({ xdr });
   } catch (err) {
     next(err);
   }

@@ -25,6 +25,7 @@
  *   escrow.open_dispute(escrow_id: u64, initiator: Address)
  *   reputation.submit(rater: Address, ratee: Address, escrow_id: u64, score: u32)
  *   dispute.raise(escrow_id: u64, escrow_contract: Address, raised_by: Address, reason: String)
+ *   dispute.approve(dispute_id: u64, arbitrator: Address, client_share: i128, freelancer_share: i128)
  *   dispute.arbitrate(dispute_id: u64, client_share: i128, freelancer_share: i128)
  */
 
@@ -138,6 +139,25 @@ export function buildRaiseArgs(
     scAddress(escrowContract),
     scAddress(raisedBy),
     scString(reason),
+  ];
+}
+
+/**
+ * `dispute.approve(dispute_id, arbitrator, client_share, freelancer_share)`
+ *
+ * One panel member's vote for a split. Shares are in base units (i128).
+ */
+export function buildApproveArgs(
+  disputeId: number | bigint,
+  arbitrator: string,
+  clientShareBaseUnits: bigint,
+  freelancerShareBaseUnits: bigint,
+): xdr.ScVal[] {
+  return [
+    scU64(disputeId),
+    scAddress(arbitrator),
+    scI128(clientShareBaseUnits),
+    scI128(freelancerShareBaseUnits),
   ];
 }
 
