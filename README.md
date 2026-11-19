@@ -457,7 +457,7 @@ not just a restart.
 | `XLM_CONTRACT_ID` | to pay in XLM | Testnet XLM SAC |
 | `USDC_CONTRACT_ID` | to pay in USDC | Empty until USDC is configured |
 | `ARBITRATOR_ADDRESSES` | for dispute resolution | Comma-separated panel addresses allowed to call `POST /api/disputes/:id/resolve`. **Empty disables the route** — it fails closed |
-| `CORS_ORIGIN` | for production | Comma-separated browser origins allowed to call the API. Empty allows every origin and logs a warning in production |
+| `CORS_ORIGIN` | for production | Comma-separated browser origins allowed to call the API. In production (and staging) an empty value or `*` is rejected at startup; empty allows every origin only in development |
 | `INDEXER_POLL_INTERVAL_MS` | — | Defaults to `5000` |
 | `AUTH_RATE_LIMIT_MAX` | — | Per-IP budget for each wallet-auth route (`/api/users/challenge`, `/api/users/auth`), counted separately. Defaults to `10` |
 | `AUTH_RATE_LIMIT_WINDOW_MS` | — | Window for those budgets, in milliseconds. Defaults to `60000` |

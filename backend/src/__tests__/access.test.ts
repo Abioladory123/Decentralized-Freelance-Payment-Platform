@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { isAllowedOrigin, isListed, parseList } from "../lib/access";
+import { corsConfigError, isAllowedOrigin, isListed, parseList } from "../lib/access";
 
 const ALICE = "GBPLJHDI6RPLS4EEJJTM7EVEV3UNTXLFAACWA63QSTHGLWH5RO3LQ75B";
 const BOB = "GAAZI4TCR3TY5OJHCTJC2A4QSY6CJWJH5IAJTGKIN2ER7LBNVKOCCWN";
@@ -66,5 +66,34 @@ describe("isAllowedOrigin", () => {
 
   it("allows requests without an Origin header (same-origin / server-to-server)", () => {
     expect(isAllowedOrigin(undefined, ["https://app.vercel.app"])).toBe(true);
+  });
+});
+
+describe("isAllowedOrigin (strict)", () => {
+  it("denies browser origins when the allowlist is empty", () => {
+    expect(isAllowedOrigin("https://evil.example", [], true)).toBe(false);
+  });
+
+  it("does not honour the wildcard", () => {
+    expect(isAllowedOrigin("https://evil.example", ["*"], true)).toBe(false);
+  });
+
+  it("allows explicitly listed origins and requests without an Origin", () => {
+    expect(isAllowedOrigin("https://app.example", ["https://app.example"], true)).toBe(true);
+    expect(isAllowedOrigin(undefined, [], true)).toBe(true);
+  });
+});
+
+describe("corsConfigError", () => {
+  it("rejects an empty or wildcard CORS_ORIGIN in production", () => {
+    expect(corsConfigError("", "production")).toMatch(/must be set/);
+    expect(corsConfigError("*", "production")).toMatch(/wildcard/);
+    expect(corsConfigError("https://a.example, *", "production")).toMatch(/wildcard/);
+  });
+
+  it("accepts explicit origins in production and anything outside it", () => {
+    expect(corsConfigError("https://a.example", "production")).toBeNull();
+    expect(corsConfigError("", "development")).toBeNull();
+    expect(corsConfigError("*", "test")).toBeNull();
   });
 });
