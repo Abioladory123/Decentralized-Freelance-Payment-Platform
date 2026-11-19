@@ -491,6 +491,8 @@ usersRouter.get("/me/export", requireAuth, async (_req, res, next) => {
         notifyOnDispute: user.notifyOnDispute,
         notifyOnRelease: user.notifyOnRelease,
         notifyOnRefund: user.notifyOnRefund,
+        notifyOnProposal: user.notifyOnProposal,
+        notifyOnAssignment: user.notifyOnAssignment,
         createdAt: user.createdAt,
       },
       jobs: {
@@ -531,6 +533,8 @@ usersRouter.delete("/me", requireAuth, async (_req, res, next) => {
         notifyOnDispute: false,
         notifyOnRelease: false,
         notifyOnRefund: false,
+        notifyOnProposal: false,
+        notifyOnAssignment: false,
       },
     });
 
@@ -599,6 +603,8 @@ export const updateSchema = z.object({
   notifyOnDispute: z.boolean().optional(),
   notifyOnRelease: z.boolean().optional(),
   notifyOnRefund: z.boolean().optional(),
+  notifyOnProposal: z.boolean().optional(),
+  notifyOnAssignment: z.boolean().optional(),
 });
 
 usersRouter.put("/me", requireAuth, validate(updateSchema), async (req, res, next) => {

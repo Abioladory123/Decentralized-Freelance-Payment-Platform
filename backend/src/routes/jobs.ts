@@ -43,6 +43,7 @@ import {
 } from "../lib/schemas";
 import { isSkillTag, SKILL_TAGS, SKILL_TAG_SLUGS } from "../lib/tags";
 import { isListed, parseList } from "../lib/access";
+import { notifyProposalSubmitted, notifyJobAssigned } from "../lib/notifications";
 
 export const jobsRouter = Router();
 
@@ -464,6 +465,13 @@ jobsRouter.post("/:id/proposals", requireAuth, idempotency(), validate(createPro
         },
         include: { freelancer: true },
       });
+
+      void notifyProposalSubmitted(
+        { id: job.id, title: job.title, client: job.client },
+        proposal,
+        freelancer,
+      );
+
       res.status(201).json(proposal);
     } catch (e: unknown) {
       if ((e as { code?: string })?.code === "P2002") {
@@ -499,7 +507,7 @@ jobsRouter.put("/:id/assign", requireAuth, idempotency(), validate(assignJobSche
       ? withTransactionRetry
       : ((fn: () => Promise<unknown>) => fn());
 
-    const updated = await execWithRetry(async () => {
+    const updated = (await execWithRetry(async () => {
       const runTransaction = typeof prisma.$transaction === "function"
         ? (fn: (tx: Prisma.TransactionClient) => Promise<unknown>, opts?: { isolationLevel?: Prisma.TransactionIsolationLevel }) =>
             prisma.$transaction(fn, opts)
@@ -544,13 +552,22 @@ jobsRouter.put("/:id/assign", requireAuth, idempotency(), validate(assignJobSche
             data: { status: "REJECTED" },
           });
 
-          return assigned;
+          return { assigned, job, freelancer };
         },
         { isolationLevel: Prisma.TransactionIsolationLevel.RepeatableRead },
       );
-    });
+    })) as {
+      assigned: Prisma.JobGetPayload<Record<string, never>>;
+      job: Prisma.JobGetPayload<{ include: { client: true } }>;
+      freelancer: Prisma.UserGetPayload<Record<string, never>>;
+    };
 
-    res.json(updated);
+    void notifyJobAssigned(
+      { id: updated.job.id, title: updated.job.title, client: updated.job.client },
+      updated.freelancer,
+    );
+
+    res.json(updated.assigned);
   } catch (err) {
     next(err);
   }
