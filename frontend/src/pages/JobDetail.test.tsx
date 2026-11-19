@@ -24,6 +24,16 @@ const h = vi.hoisted(() => ({
   authenticate: vi.fn(async () => "jwt-1"),
   fetchJobs: vi.fn(async () => [] as unknown[]),
   fetchJob: vi.fn(async () => null as unknown),
+  fetchJobByEscrow: vi.fn(async (escrowId: string | number | bigint) => {
+    const jobs = (await h.fetchJobs()) as Array<Record<string, unknown>>;
+    const match = jobs.find(
+      (j) =>
+        j.escrowId !== undefined &&
+        j.escrowId !== null &&
+        BigInt(j.escrowId as string | number | bigint) === BigInt(escrowId),
+    );
+    return match ?? (jobs.length > 0 && jobs[0].escrowId === undefined ? jobs[0] : null);
+  }),
   uploadJobMilestoneDeliverable: vi.fn(),
   recordRating: vi.fn(async () => ({ rating: {}, xdr: "x" })),
   createDispute: vi.fn(),
@@ -58,6 +68,7 @@ vi.mock("../lib/api", () => ({
   authenticate: h.authenticate,
   fetchJobs: h.fetchJobs,
   fetchJob: h.fetchJob,
+  fetchJobByEscrow: h.fetchJobByEscrow,
   uploadJobMilestoneDeliverable: h.uploadJobMilestoneDeliverable,
   submitRating: h.recordRating,
   createDispute: h.createDispute,
@@ -706,6 +717,24 @@ describe("Milestone Deliverables (Issue #65)", () => {
 
     fireEvent.click(attachBtn);
     expect(screen.getByText("Select File")).toBeTruthy();
+  });
+});
+
+describe("JobDetail direct by-escrow lookup (Issue #252)", () => {
+  it("resolves job ID via direct fetchJobByEscrow and does not call fetchJobs", async () => {
+    h.wallet.publicKey = CLIENT;
+    h.escrow.getEscrow.mockResolvedValue(ACTIVE);
+    h.fetchJobs.mockClear();
+    h.fetchJobByEscrow.mockClear();
+    h.fetchJobByEscrow.mockResolvedValue({ id: "job-by-escrow-7", escrowId: 7 });
+
+    render(<JobDetail />);
+
+    await waitFor(() => {
+      expect(h.fetchJobByEscrow).toHaveBeenCalledWith(7n);
+    });
+    // Verifies the redundant dual 100-item fetchJobs calls are eliminated
+    expect(h.fetchJobs).not.toHaveBeenCalled();
   });
 });
 

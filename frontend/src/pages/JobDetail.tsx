@@ -52,7 +52,7 @@ import {
 import {
   authenticate,
   createDispute,
-  fetchJobs,
+  fetchJobByEscrow,
   fetchJob,
   linkDisputeId,
   submitRating as recordRating,
@@ -78,18 +78,15 @@ const SCORES = [1, 2, 3, 4, 5];
 
 /**
  * JobDetail is keyed by the on-chain escrow id; the reputation API keys a rating
- * on the off-chain job id, so resolve one to the other through the job list.
+ * on the off-chain job id, so resolve one to the other directly via by-escrow API (issue #173, #252).
  */
-async function findJobIdByEscrow(escrowId: bigint, address: string): Promise<string | null> {
-  const [asClient, asFreelancer] = await Promise.all([
-    fetchJobs({ client: address, limit: 100 }),
-    fetchJobs({ freelancer: address, limit: 100 }),
-  ]);
-  const match = [...asClient, ...asFreelancer].find(
-    (job) =>
-      job.escrowId !== null && job.escrowId !== undefined && BigInt(job.escrowId) === escrowId,
-  );
-  return match?.id ?? null;
+async function findJobIdByEscrow(escrowId: bigint): Promise<string | null> {
+  try {
+    const job = await fetchJobByEscrow(escrowId);
+    return job?.id ?? null;
+  } catch {
+    return null;
+  }
 }
 
 export default function JobDetail() {
@@ -194,7 +191,7 @@ export default function JobDetail() {
       // first load, not on every 5s poll; the job ID mapping is immutable).
       if (!cachedJobId) {
         try {
-          const jId = await findJobIdByEscrow(escrowId, data.client);
+          const jId = await findJobIdByEscrow(escrowId);
           if (jId) {
             setCachedJobId(jId);
             setOffChainJobId(jId);
@@ -232,7 +229,7 @@ export default function JobDetail() {
     }
     let cancelled = false;
     setJobLookupDone(false);
-    void findJobIdByEscrow(escrowId, publicKey)
+    void findJobIdByEscrow(escrowId)
       .then((id) => {
         if (cancelled) return;
         setCachedJobId(id);
@@ -320,7 +317,7 @@ export default function JobDetail() {
       // Use cached job ID if available; otherwise resolve it
       let jobIdToUse = cachedJobId;
       if (!jobIdToUse) {
-        jobIdToUse = await findJobIdByEscrow(escrowId, publicKey);
+        jobIdToUse = await findJobIdByEscrow(escrowId);
         if (jobIdToUse) setCachedJobId(jobIdToUse);
       }
       if (!jobIdToUse) {
@@ -389,7 +386,7 @@ export default function JobDetail() {
 
       let targetJobId = offChainJobId || cachedJobId;
       if (!targetJobId && escrowId !== null) {
-        targetJobId = await findJobIdByEscrow(escrowId, publicKey);
+        targetJobId = await findJobIdByEscrow(escrowId);
         if (targetJobId) setCachedJobId(targetJobId);
       }
       if (!targetJobId) {
@@ -441,7 +438,7 @@ export default function JobDetail() {
       // Use cached job ID if available; otherwise resolve it
       let jobIdToUse = cachedJobId;
       if (!jobIdToUse) {
-        jobIdToUse = await findJobIdByEscrow(escrow, publicKey);
+        jobIdToUse = await findJobIdByEscrow(escrow);
         if (jobIdToUse) setCachedJobId(jobIdToUse);
       }
       if (!jobIdToUse) {

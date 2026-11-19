@@ -25,6 +25,7 @@ import {
   submitProposal,
   fetchProposals,
   assignFreelancer,
+  fetchJobByEscrow,
   type JobApi,
 } from "./api";
 
@@ -118,6 +119,50 @@ describe("fetchUserJobs", () => {
     const jobs = await fetchUserJobs("GADDR");
 
     expect(jobs.map((j) => j.id)).toEqual(["new", "old"]);
+  });
+});
+
+describe("fetchJobByEscrow (Issue #252)", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("fetches a job directly by its escrow ID", async () => {
+    const job = jobRow("job-123", { escrowId: 42 });
+    const fetchMock = vi.fn(async (url: RequestInfo | URL) => {
+      void url;
+      return new Response(JSON.stringify(job), { status: 200 });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const result = await fetchJobByEscrow(42n);
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(String(fetchMock.mock.calls[0][0])).toContain("/api/jobs/by-escrow/42");
+    expect(result?.id).toBe("job-123");
+  });
+
+  it("returns null when job is not found (HTTP 404)", async () => {
+    const fetchMock = vi.fn(async (url: RequestInfo | URL) => {
+      void url;
+      return new Response(JSON.stringify({ error: "Job not found" }), { status: 404 });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const result = await fetchJobByEscrow(999);
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(result).toBeNull();
+  });
+
+  it("throws when server returns a 500 error", async () => {
+    const fetchMock = vi.fn(async (url: RequestInfo | URL) => {
+      void url;
+      return new Response(JSON.stringify({ error: "Internal error" }), { status: 500 });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(fetchJobByEscrow(10)).rejects.toThrow(/Could not load job by escrow \(HTTP 500\)/);
   });
 });
 
