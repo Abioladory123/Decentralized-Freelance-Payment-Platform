@@ -209,6 +209,24 @@ export async function fetchJob(id: string): Promise<JobApi> {
   return (await res.json()) as JobApi;
 }
 
+/**
+ * Direct lookup for a job by its on-chain escrow ID (issue #173, #252).
+ * Returns null if the job does not exist or has not been indexed yet (HTTP 404).
+ * Throws on other non-2xx responses.
+ */
+export async function fetchJobByEscrow(
+  escrowId: string | number | bigint,
+  signal?: AbortSignal,
+): Promise<JobApi | null> {
+  const res = await fetch(
+    `${API_BASE_URL}/api/jobs/by-escrow/${encodeURIComponent(escrowId.toString())}`,
+    { signal },
+  );
+  if (res.status === 404) return null;
+  if (!res.ok) throw new Error(`Could not load job by escrow (HTTP ${res.status})`);
+  return (await res.json()) as JobApi;
+}
+
 /** Fetch the proposals submitted for a job (issue #63). */
 export async function fetchProposals(jobId: string): Promise<ProposalApi[]> {
   const res = await fetch(`${API_BASE_URL}/api/jobs/${encodeURIComponent(jobId)}/proposals`);
