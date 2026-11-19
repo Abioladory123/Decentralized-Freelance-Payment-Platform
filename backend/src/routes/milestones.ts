@@ -1,11 +1,11 @@
 import { Router } from "express";
 import { prisma } from "../db";
-import { config } from "../config";
 import { requireAuth } from "../middleware/auth";
 import { validate } from "../middleware/validate";
 import { AppError } from "../middleware/errorHandler";
 import { createDeliverableSchema } from "../lib/schemas";
-import { isListed, parseList } from "../lib/access";
+import { isListed } from "../lib/access";
+import { getArbitratorPanel } from "../lib/arbitratorPanel";
 
 export const milestonesRouter = Router();
 
@@ -76,7 +76,7 @@ milestonesRouter.get("/:id/deliverables", requireAuth, async (req, res, next) =>
     const stellarAddress = res.locals.stellarAddress;
     const isClient = milestone.job.client?.stellarAddress === stellarAddress;
     const isFreelancer = milestone.job.freelancer?.stellarAddress === stellarAddress;
-    const isArbitrator = isListed(stellarAddress, parseList(config.ARBITRATOR_ADDRESSES));
+    const isArbitrator = isListed(stellarAddress, await getArbitratorPanel());
 
     if (!isClient && !isFreelancer && !isArbitrator) {
       throw new AppError(403, "Access denied: you must be the client, freelancer, or arbitrator");

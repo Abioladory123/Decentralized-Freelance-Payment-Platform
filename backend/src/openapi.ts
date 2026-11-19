@@ -981,7 +981,7 @@ registry.registerPath({
     403: errors[403],
     404: errors[404],
     409: errors[409],
-    503: { description: "No ARBITRATOR_ADDRESSES configured — resolution fails closed" },
+    503: { description: "No arbitrator panel available (empty on-chain panel and no ARBITRATOR_ADDRESSES fallback) — resolution fails closed" },
   },
 });
 

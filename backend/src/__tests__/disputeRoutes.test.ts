@@ -59,6 +59,12 @@ const h = vi.hoisted(() => ({
   },
 }));
 
+// The panel read is its own concern (see arbitratorPanel.test.ts); stubbing it
+// keeps the on-chain `arbitrators()` simulation out of `builtTxs`.
+vi.mock("../lib/arbitratorPanel", () => ({
+  getArbitratorPanel: async () => (process.env.ARBITRATOR_ADDRESSES ?? "").split(",").filter(Boolean),
+}));
+
 vi.mock("../db", () => ({ prisma: { dispute: h.dispute, job: h.job, user: h.user } }));
 
 // `getAsset` is wrapped rather than replaced so the registry stays real for

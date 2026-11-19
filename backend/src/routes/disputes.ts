@@ -23,8 +23,11 @@
  *   POST /api/disputes/:id/sync     — record the on-chain dispute id
  *   POST /api/disputes/:id/resolve  — arbitrator resolves (builds arbitrate tx)
  *
- * Authorization: `/:id/resolve` may only be called by an address listed in
- * `ARBITRATOR_ADDRESSES`. The on-chain dispute contract is still the final
+ * Authorization: `/:id/resolve` may only be called by a member of the arbitrator
+ * panel. The panel is read from the on-chain dispute contract (see
+ * `lib/arbitratorPanel.ts`), so a `set_panel` rotation takes effect without a
+ * redeploy; `ARBITRATOR_ADDRESSES` is only the fallback when the chain cannot
+ * be read. The on-chain dispute contract is still the final
  * authority (it checks panel membership inside `arbitrate`), but the route also
  * writes DB state before the transaction is confirmed, so it must not be
  * reachable by a non-arbitrator.
@@ -49,7 +52,8 @@ import {
   ESCROW_ERROR_MESSAGES,
 } from "../lib/contractErrors";
 import { buildTx } from "../lib/soroban";
-import { isListed, parseList } from "../lib/access";
+import { isListed } from "../lib/access";
+import { getArbitratorPanel } from "../lib/arbitratorPanel";
 import { requireAuth } from "../middleware/auth";
 import { validate } from "../middleware/validate";
 import { AppError } from "../middleware/errorHandler";
@@ -93,9 +97,9 @@ async function loadDispute(id: string): Promise<DisputeWithParties> {
   return dispute;
 }
 
-/** True when `address` is on the configured arbitration panel. Fails closed. */
-function isArbitrator(address: string): boolean {
-  const panel = parseList(config.ARBITRATOR_ADDRESSES);
+/** True when `address` is on the current arbitration panel. Fails closed. */
+async function isArbitrator(address: string): Promise<boolean> {
+  const panel = await getArbitratorPanel();
   return panel.length > 0 && isListed(address, panel);
 }
 
@@ -305,7 +309,7 @@ disputesRouter.get("/:id/evidence", requireAuth, async (req, res, next) => {
     const isParty =
       dispute.job.client.stellarAddress === addr ||
       dispute.job.freelancer?.stellarAddress === addr;
-    if (!isParty && !isArbitrator(addr)) {
+    if (!isParty && !(await isArbitrator(addr))) {
       throw new AppError(403, "Only the parties or an arbitrator can view this evidence");
     }
 
@@ -420,12 +424,12 @@ disputesRouter.post("/:id/resolve", requireAuth, validate(resolveSchema), async 
   try {
     const { clientShare, freelancerShare } = req.body as z.infer<typeof resolveSchema>;
 
-    // Fail closed: an unconfigured allowlist grants nobody access.
-    const arbitrators = parseList(config.ARBITRATOR_ADDRESSES);
+    // Fail closed: an empty panel grants nobody access.
+    const arbitrators = await getArbitratorPanel();
     if (arbitrators.length === 0) {
       throw new AppError(
         503,
-        "Dispute resolution is unavailable: no ARBITRATOR_ADDRESSES configured",
+        "Dispute resolution is unavailable: no arbitrator panel configured",
       );
     }
     if (!isListed(res.locals.stellarAddress, arbitrators)) {
