@@ -1068,9 +1068,11 @@ export async function uploadJobMilestoneDeliverable(
 /** Fetch a milestone's deliverables by milestone id. */
 export async function fetchMilestoneDeliverables(
   milestoneId: string,
+  token: string,
 ): Promise<DeliverableApi[]> {
   const res = await fetch(
     `${API_BASE_URL}/api/milestones/${encodeURIComponent(milestoneId)}/deliverables`,
+    { headers: { Authorization: `Bearer ${token}` } },
   );
   if (!res.ok) throw new Error(`Could not load deliverables (HTTP ${res.status})`);
   return (await res.json()) as DeliverableApi[];
@@ -1080,9 +1082,11 @@ export async function fetchMilestoneDeliverables(
 export async function fetchJobMilestoneDeliverables(
   jobId: string,
   milestoneIndex: number,
+  token: string,
 ): Promise<DeliverableApi[]> {
   const res = await fetch(
     `${API_BASE_URL}/api/jobs/${encodeURIComponent(jobId)}/milestones/${milestoneIndex}/deliverables`,
+    { headers: { Authorization: `Bearer ${token}` } },
   );
   if (!res.ok) throw new Error(`Could not load deliverables (HTTP ${res.status})`);
   return (await res.json()) as DeliverableApi[];

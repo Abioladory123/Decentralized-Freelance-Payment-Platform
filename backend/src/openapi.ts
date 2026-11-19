@@ -646,9 +646,15 @@ registry.registerPath({
   method: "get",
   path: "/api/jobs/{jobId}/milestones/{index}/deliverables",
   tags: ["Jobs"],
-  summary: "List a milestone's deliverables",
+  summary: "List a milestone's deliverables (client, assigned freelancer or arbitrator only)",
+  security: auth,
   request: { params: z.object({ jobId: z.string(), index: z.coerce.number().int() }) },
-  responses: { 200: json(z.array(z.object({ id: z.string() })), "The deliverables") },
+  responses: {
+    200: json(z.array(z.object({ id: z.string() })), "The deliverables"),
+    401: errors[401],
+    403: errors[403],
+    404: errors[404],
+  },
 });
 
 registry.registerPath({

@@ -43,6 +43,7 @@ import {
 } from "../lib/schemas";
 import { isSkillTag, SKILL_TAGS, SKILL_TAG_SLUGS } from "../lib/tags";
 import { isListed, parseList } from "../lib/access";
+import { getArbitratorPanel } from "../lib/arbitratorPanel";
 import { notifyProposalSubmitted, notifyJobAssigned } from "../lib/notifications";
 
 export const jobsRouter = Router();
@@ -632,13 +633,31 @@ jobsRouter.post(
 );
 
 // GET /api/jobs/:jobId/milestones/:index/deliverables
-jobsRouter.get("/:jobId/milestones/:index/deliverables", async (req, res, next) => {
+//
+// Deliverables are confidential work product, so this mirrors the access rule of
+// GET /api/milestones/:id/deliverables: only the job's client, its assigned
+// freelancer or a panel arbitrator may read them.
+jobsRouter.get("/:jobId/milestones/:index/deliverables", requireAuth, async (req, res, next) => {
   try {
     const milestoneIndex = parseInt(req.params.index, 10);
     if (isNaN(milestoneIndex)) throw new AppError(400, "Invalid milestone index");
 
+    const job = await prisma.job.findUnique({
+      where: { id: req.params.jobId },
+      include: { client: true, freelancer: true },
+    });
+    if (!job) throw new AppError(404, "Job not found");
+
+    const stellarAddress = res.locals.stellarAddress;
+    const isParticipant =
+      job.client?.stellarAddress === stellarAddress ||
+      job.freelancer?.stellarAddress === stellarAddress;
+    if (!isParticipant && !isListed(stellarAddress, await getArbitratorPanel())) {
+      throw new AppError(403, "Access denied: you must be the client, freelancer, or arbitrator");
+    }
+
     const milestone = await prisma.milestone.findFirst({
-      where: { jobId: req.params.jobId, index: milestoneIndex },
+      where: { jobId: job.id, index: milestoneIndex },
     });
     if (!milestone) throw new AppError(404, "Milestone not found");
 
