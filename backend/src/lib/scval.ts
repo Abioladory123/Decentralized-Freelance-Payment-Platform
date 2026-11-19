@@ -19,6 +19,7 @@
  * Contract signatures these builders must keep matching:
  *   escrow.fund(escrow_id: u64)
  *   escrow.release_milestone(escrow_id: u64, milestone_index: u32)
+ *   escrow.release_partial(escrow_id: u64, milestone_index: u32, amount: i128)
  *   escrow.reclaim_expired(escrow_id: u64)
  *   escrow.reclaim_after_dispute_timeout(escrow_id: u64)
  *   escrow.open_dispute(escrow_id: u64, initiator: Address)
@@ -70,6 +71,19 @@ export function buildReleaseMilestoneArgs(
   milestoneIndex: number,
 ): xdr.ScVal[] {
   return [scU64(escrowId), scU32(milestoneIndex)];
+}
+
+/**
+ * `escrow.release_partial(escrow_id, milestone_index, amount)`
+ *
+ * `amount` is in the asset's base units (the contract's `i128`).
+ */
+export function buildReleasePartialArgs(
+  escrowId: number | bigint,
+  milestoneIndex: number,
+  amount: number | bigint,
+): xdr.ScVal[] {
+  return [scU64(escrowId), scU32(milestoneIndex), scI128(amount)];
 }
 
 /** `escrow.reclaim_expired(escrow_id)` */

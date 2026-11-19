@@ -212,6 +212,56 @@ for (const [path, extra] of BUILD_ROUTES) {
   });
 }
 
+describe("POST /api/escrow/build/release-partial", () => {
+  const job = { asset: "XLM", client: { stellarAddress: CLIENT } };
+
+  it("builds a release_partial call for the client", async () => {
+    h.job.findUnique.mockResolvedValue(job);
+    const res = await post("/build/release-partial", {
+      escrowId: 3,
+      milestoneIndex: 1,
+      amount: 2.5,
+    });
+    expect(res.status).toBe(200);
+    expect(res.body.xdr).toBe("assembled-xdr");
+    expect(builtTxs).toHaveLength(1);
+  });
+
+  it("rejects a non-positive amount with 400", async () => {
+    const res = await post("/build/release-partial", {
+      escrowId: 3,
+      milestoneIndex: 0,
+      amount: 0,
+    });
+    expect(res.status).toBe(400);
+    expect(builtTxs).toHaveLength(0);
+  });
+
+  it("answers 404 when no job is linked to the escrow", async () => {
+    h.job.findUnique.mockResolvedValue(null);
+    const res = await post("/build/release-partial", {
+      escrowId: 3,
+      milestoneIndex: 0,
+      amount: 1,
+    });
+    expect(res.status).toBe(404);
+  });
+
+  it("answers 403 when the caller is not the client", async () => {
+    h.job.findUnique.mockResolvedValue({
+      asset: "XLM",
+      client: { stellarAddress: Keypair.random().publicKey() },
+    });
+    const res = await post("/build/release-partial", {
+      escrowId: 3,
+      milestoneIndex: 0,
+      amount: 1,
+    });
+    expect(res.status).toBe(403);
+    expect(builtTxs).toHaveLength(0);
+  });
+});
+
 describe("escrowId validation — zero-based ids", () => {
   it("accepts id 0, the first id the contract assigns", async () => {
     // `next_id` returns 0 for the first escrow (contracts/escrow/src/test.rs
