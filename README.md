@@ -181,7 +181,7 @@ return an **unsigned XDR** for the client to sign, and never a key.
 | `GET` | `/api/users/:address/transactions?page=1&limit=20` | — | Paginated indexed on-chain history for the address's escrows, with explorer links and totals |
 | `GET` | `/api/users/:address/reminders` | — | Milestone deadlines that are overdue or due soon (`?withinHours=`) |
 | `PUT` | `/api/users/me` | ✅ | Update your own profile |
-| `GET` | `/api/jobs` | — | List jobs with status + `tag` filters and pagination |
+| `GET` | `/api/jobs` | — | List jobs with status + `tag` filters and pagination. Returns `{ data, pagination: { total, page, limit, totalPages, hasMore } }` |
 | `GET` | `/api/jobs/tags` | — | The curated skill-tag taxonomy |
 | `GET` | `/api/jobs/saved` | ✅ | The caller's bookmarked jobs, newest first |
 | `POST` | `/api/jobs/:id/save` | ✅ | Bookmark a job (idempotent) |

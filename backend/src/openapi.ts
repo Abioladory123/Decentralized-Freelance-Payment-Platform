@@ -526,7 +526,21 @@ registry.registerPath({
   tags: ["Jobs"],
   summary: "List jobs with status filters and pagination",
   request: { query: jobListQuery },
-  responses: { 200: json(z.array(job), "A page of jobs, newest first") },
+  responses: {
+    200: json(
+      z.object({
+        data: z.array(job),
+        pagination: z.object({
+          total: z.number().int().describe("Jobs matching the filters, across all pages"),
+          page: z.number().int(),
+          limit: z.number().int(),
+          totalPages: z.number().int(),
+          hasMore: z.boolean().describe("Whether a later page has more jobs"),
+        }),
+      }),
+      "A page of jobs plus pagination metadata",
+    ),
+  },
 });
 
 registry.registerPath({

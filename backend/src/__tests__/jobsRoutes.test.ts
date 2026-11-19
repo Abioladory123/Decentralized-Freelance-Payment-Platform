@@ -22,6 +22,7 @@ const CLIENT = Keypair.random().publicKey();
 const h = vi.hoisted(() => ({
   job: {
     findMany: vi.fn(),
+    count: vi.fn(),
     create: vi.fn(),
     findUnique: vi.fn(),
     update: vi.fn(),
@@ -65,6 +66,7 @@ afterAll(async () => {
 beforeEach(() => {
   for (const fn of [
     h.job.findMany,
+    h.job.count,
     h.job.create,
     h.job.findUnique,
     h.job.update,
@@ -76,6 +78,7 @@ beforeEach(() => {
     fn.mockReset();
   }
   h.job.findMany.mockResolvedValue([]);
+  h.job.count.mockResolvedValue(0);
   // `requireAuth` asks for the caller's session; the save/unsave handlers ask
   // for the caller's row. Distinguish the two by the `select` shape.
   h.user.findUnique.mockImplementation(({ select }: { select?: { sessions?: unknown } }) =>
@@ -194,6 +197,54 @@ describe("GET /api/jobs?tag=", () => {
     expect(String(res.body.error)).toMatch(/Unknown tag/);
     expect(String(res.body.error)).toContain("web-development");
     expect(h.job.findMany).not.toHaveBeenCalled();
+  });
+});
+
+describe("GET /api/jobs pagination envelope", () => {
+  it("wraps the page in { data, pagination } with totals", async () => {
+    h.job.findMany.mockResolvedValue([{ id: "job_1" }, { id: "job_2" }]);
+    h.job.count.mockResolvedValue(45);
+
+    const res = await get("/?page=2&limit=20");
+
+    expect(res.status).toBe(200);
+    expect(res.body.data).toEqual([{ id: "job_1" }, { id: "job_2" }]);
+    expect(res.body.pagination).toEqual({
+      total: 45,
+      page: 2,
+      limit: 20,
+      totalPages: 3,
+      hasMore: true,
+    });
+  });
+
+  it("reports hasMore false on the last page", async () => {
+    h.job.count.mockResolvedValue(45);
+
+    const res = await get("/?page=3&limit=20");
+
+    expect(res.body.pagination).toMatchObject({ totalPages: 3, hasMore: false });
+  });
+
+  it("counts with the same filters as the page", async () => {
+    await get("/?status=ACTIVE&tag=web-development&page=2&limit=5");
+
+    expect(h.job.count).toHaveBeenCalledTimes(1);
+    expect(h.job.count.mock.calls[0][0].where).toEqual(
+      h.job.findMany.mock.calls[0][0].where,
+    );
+  });
+
+  it("returns zero totals for an empty result", async () => {
+    const res = await get("/");
+
+    expect(res.body.pagination).toEqual({
+      total: 0,
+      page: 1,
+      limit: 20,
+      totalPages: 0,
+      hasMore: false,
+    });
   });
 });
 
