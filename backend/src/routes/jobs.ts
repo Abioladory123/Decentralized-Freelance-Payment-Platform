@@ -486,13 +486,35 @@ jobsRouter.post("/:id/proposals", requireAuth, idempotency(), validate(createPro
 });
 
 // GET /api/jobs/:id/proposals
-jobsRouter.get("/:id/proposals", async (req, res, next) => {
+//
+// Bids, rates and cover letters are private to the people involved, so this is
+// authenticated and follows the same visibility rule as the proposals embedded
+// in GET /api/jobs/:id (issue #309): the job's client sees every proposal, a
+// freelancer who applied sees only their own, and anyone else is refused.
+jobsRouter.get("/:id/proposals", requireAuth, async (req, res, next) => {
   try {
+    const job = await prisma.job.findUnique({
+      where: { id: req.params.id },
+      include: { client: true },
+    });
+    if (!job) throw new AppError(404, "Job not found");
+
+    const callerAddress = res.locals.stellarAddress;
+    const isClient = job.client?.stellarAddress === callerAddress;
+
     const proposals = await prisma.proposal.findMany({
-      where: { jobId: req.params.id },
+      where: {
+        jobId: job.id,
+        ...(isClient ? {} : { freelancer: { stellarAddress: callerAddress } }),
+      },
       include: { freelancer: true },
       orderBy: { createdAt: "desc" },
     });
+
+    if (!isClient && proposals.length === 0) {
+      throw new AppError(403, "Access denied: only the client or an applicant can view proposals");
+    }
+
     res.json(proposals);
   } catch (err) {
     next(err);

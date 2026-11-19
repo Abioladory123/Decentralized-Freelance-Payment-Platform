@@ -606,9 +606,15 @@ registry.registerPath({
   method: "get",
   path: "/api/jobs/{id}/proposals",
   tags: ["Jobs"],
-  summary: "List the proposals submitted for a job",
+  summary: "List the proposals submitted for a job (client: all; applicant: own only)",
+  security: auth,
   request: { params: z.object({ id: z.string() }) },
-  responses: { 200: json(z.array(proposal), "The job's proposals") },
+  responses: {
+    200: json(z.array(proposal), "The job's proposals"),
+    401: errors[401],
+    403: errors[403],
+    404: errors[404],
+  },
 });
 
 registry.registerPath({

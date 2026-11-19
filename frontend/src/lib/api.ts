@@ -228,8 +228,10 @@ export async function fetchJobByEscrow(
 }
 
 /** Fetch the proposals submitted for a job (issue #63). */
-export async function fetchProposals(jobId: string): Promise<ProposalApi[]> {
-  const res = await fetch(`${API_BASE_URL}/api/jobs/${encodeURIComponent(jobId)}/proposals`);
+export async function fetchProposals(jobId: string, token: string): Promise<ProposalApi[]> {
+  const res = await fetch(`${API_BASE_URL}/api/jobs/${encodeURIComponent(jobId)}/proposals`, {
+    headers: { Authorization: `Bearer ${token}` },
+  });
   if (!res.ok) throw new Error(`Could not load proposals (HTTP ${res.status})`);
   return (await res.json()) as ProposalApi[];
 }
