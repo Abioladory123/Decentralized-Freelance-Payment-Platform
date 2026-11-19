@@ -52,6 +52,9 @@ export const jobsRouter = Router();
 // Prisma: an unknown `status` used to throw inside Prisma (a 500 rather than a
 // 400), a non-numeric `page`/`limit` became `NaN` in `skip`/`take`, and `limit`
 // was unbounded.
+//
+// The response is an envelope, `{ data, pagination }`, where `pagination` is
+// `{ total, page, limit, totalPages, hasMore }`.
 jobsRouter.get("/", async (req, res, next) => {
   try {
     const parsed = listJobsQuerySchema.safeParse(req.query);
@@ -126,27 +129,46 @@ jobsRouter.get("/", async (req, res, next) => {
       orderBy = { createdAt: "desc" };
     }
 
-    const jobs = await prisma.job.findMany({
-      where: {
-        // Cancelled jobs are withdrawn, not open work: hide them from the
-        // default listing (issue #81). They stay reachable by id, and an
-        // explicit `?status=CANCELLED` still lists them for history/audit.
-        ...(status ? { status } : { status: { not: "CANCELLED" as const } }),
-        ...(asset ? { asset } : {}),
-        ...(client ? { client: { stellarAddress: client } } : {}),
-        ...(freelancer ? { freelancer: { stellarAddress: freelancer } } : {}),
-        // Postgres array containment: a job matches when its tags include this one.
-        ...(tagFilter ? { tags: { has: tagFilter } } : {}),
-        ...(isVerified !== undefined ? { isVerified } : {}),
-        ...(Object.keys(dateFilter).length > 0 ? { createdAt: dateFilter } : {}),
-        ...searchFilter,
+    const where = {
+      // Cancelled jobs are withdrawn, not open work: hide them from the
+      // default listing (issue #81). They stay reachable by id, and an
+      // explicit `?status=CANCELLED` still lists them for history/audit.
+      ...(status ? { status } : { status: { not: "CANCELLED" as const } }),
+      ...(asset ? { asset } : {}),
+      ...(client ? { client: { stellarAddress: client } } : {}),
+      ...(freelancer ? { freelancer: { stellarAddress: freelancer } } : {}),
+      // Postgres array containment: a job matches when its tags include this one.
+      ...(tagFilter ? { tags: { has: tagFilter } } : {}),
+      ...(isVerified !== undefined ? { isVerified } : {}),
+      ...(Object.keys(dateFilter).length > 0 ? { createdAt: dateFilter } : {}),
+      ...searchFilter,
+    };
+
+    // The count uses the same `where` as the page, so `total` is the size of the
+    // whole filtered result set — not of the page.
+    const [jobs, total] = await Promise.all([
+      prisma.job.findMany({
+        where,
+        include: { milestones: true, client: true, freelancer: true },
+        orderBy,
+        skip: (page - 1) * limit,
+        take: limit,
+      }),
+      prisma.job.count({ where }),
+    ]);
+
+    // Pagination envelope (issue: total/page metadata), so a client can render
+    // page controls without probing out-of-range pages.
+    res.json({
+      data: jobs,
+      pagination: {
+        total,
+        page,
+        limit,
+        totalPages: Math.ceil(total / limit),
+        hasMore: page * limit < total,
       },
-      include: { milestones: true, client: true, freelancer: true },
-      orderBy,
-      skip: (page - 1) * limit,
-      take: limit,
     });
-    res.json(jobs);
   } catch (err) {
     next(err);
   }

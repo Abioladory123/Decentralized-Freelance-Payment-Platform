@@ -150,16 +150,56 @@ export interface JobDisputeSummaryApi {
   createdAt?: string;
 }
 
+/** Pagination metadata returned alongside a page of jobs. */
+export interface PaginationMeta {
+  total: number;
+  page: number;
+  limit: number;
+  totalPages: number;
+  hasMore: boolean;
+}
+
+export interface JobsPage {
+  data: JobApi[];
+  pagination: PaginationMeta;
+}
+
+/**
+ * Fetch a page of jobs with its pagination metadata. Throws on a non-2xx
+ * response. A bare array (the pre-envelope response shape) is still accepted
+ * and given best-effort metadata, so an older backend keeps working.
+ */
+export async function fetchJobsPage(
+  query: JobListQuery = {},
+  signal?: AbortSignal,
+): Promise<JobsPage> {
+  const res = await fetch(`${API_BASE_URL}/api/jobs${buildJobsQuery(query)}`, {
+    signal,
+  });
+  if (!res.ok) throw new Error(`Could not load jobs (HTTP ${res.status})`);
+  const body = (await res.json()) as JobsPage | JobApi[];
+  if (Array.isArray(body)) {
+    const limit = query.limit ?? body.length;
+    return {
+      data: body,
+      pagination: {
+        total: body.length,
+        page: query.page ?? 1,
+        limit,
+        totalPages: body.length > 0 ? 1 : 0,
+        hasMore: false,
+      },
+    };
+  }
+  return body;
+}
+
 /** Fetch a page of jobs. Throws on a non-2xx response. */
 export async function fetchJobs(
   query: JobListQuery = {},
   signal?: AbortSignal,
 ): Promise<JobApi[]> {
-  const res = await fetch(`${API_BASE_URL}/api/jobs${buildJobsQuery(query)}`, {
-    signal,
-  });
-  if (!res.ok) throw new Error(`Could not load jobs (HTTP ${res.status})`);
-  return (await res.json()) as JobApi[];
+  return (await fetchJobsPage(query, signal)).data;
 }
 
 /** Fetch a single job by id (used for milestone deliverables, issue #65). */

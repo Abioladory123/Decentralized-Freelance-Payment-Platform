@@ -26,7 +26,12 @@ const schema = z.object({
   REMINDER_HORIZON_HOURS: z.coerce.number().default(48),
   // Comma-separated Stellar addresses that may resolve disputes through the
   // API. Empty means "nobody", not "everybody": the route fails closed.
+  // When DISPUTE_CONTRACT_ID is set the panel is read from the contract
+  // (`arbitrators()`), and this list is only the fallback if the chain cannot
+  // be read. Without a dispute contract it is the panel.
   ARBITRATOR_ADDRESSES: z.string().default(""),
+  // How long an on-chain arbitrator panel read is reused before re-reading it.
+  ARBITRATOR_PANEL_CACHE_TTL_MS: z.coerce.number().int().nonnegative().default(30_000),
   // Comma-separated wallet addresses authorized to operate admin endpoints.
   // Empty means "nobody", not "everybody".
   INDEXER_ADMIN_ADDRESSES: z.string().default(""),
