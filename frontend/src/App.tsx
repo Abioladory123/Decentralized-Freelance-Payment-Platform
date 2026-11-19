@@ -5,6 +5,7 @@
  *
  * Routes:
  *   /              → Dashboard (connect wallet, open a job by id)
+ *   /freelancers   → FreelancerDirectory (talent discovery, #68, #251)
  *   /post          → PostJob (client creates + funds a new escrow)
  *   /activity      → Activity (earnings + open escrows for the wallet, #73)
  *   /jobs/:id      → JobDetail (milestone tracker, release + dispute)
@@ -14,7 +15,7 @@
  */
 
 import { lazy, Suspense } from "react";
-import { BrowserRouter, Link, Route, Routes } from "react-router-dom";
+import { BrowserRouter, Link, NavLink, Route, Routes } from "react-router-dom";
 import { WalletProvider } from "./hooks/WalletProvider";
 import { ToastProvider } from "./hooks/ToastProvider";
 import { useWallet } from "./hooks/wallet-context";
@@ -35,16 +36,17 @@ const Profile = lazy(() => import("./pages/Profile"));
 const FreelancerDirectory = lazy(() => import("./pages/FreelancerDirectory"));
 const NotFound = lazy(() => import("./pages/NotFound"));
 
-function Nav() {
+export function Nav() {
   const { publicKey, connecting, connect, disconnect } = useWallet();
   return (
     <nav className="nav" aria-label="Main navigation">
       <Link to="/" className="nav-brand" aria-label="Stellar Freelance Platform Home">
         <Logo size={28} />
       </Link>
-      <Link to="/">My Jobs</Link>
-      <Link to="/activity">Activity</Link>
-      <Link to="/post">Post a Job</Link>
+      <NavLink to="/" end>My Jobs</NavLink>
+      <NavLink to="/activity">Activity</NavLink>
+      <NavLink to="/freelancers">Freelancers</NavLink>
+      <NavLink to="/post">Post a Job</NavLink>
       <span className="nav-spacer" style={{ display: "inline-flex", alignItems: "center" }}>
         {publicKey ? (
           <>
