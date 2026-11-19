@@ -14,6 +14,7 @@ const OTHER_USER = "GDMVLW7Y3L2R5G3U2SBNFFXN677OHZCRW3B2PZ6WJFF3TPLXJ5L4I2KJ";
 const JWT_SECRET = process.env.JWT_SECRET || "development-secret-change-in-production";
 
 const h = vi.hoisted(() => ({
+  $transaction: vi.fn(),
   job: {
     findUnique: vi.fn(),
     findMany: vi.fn(),
@@ -33,6 +34,7 @@ const h = vi.hoisted(() => ({
 
 vi.mock("../db", () => ({
   prisma: {
+    $transaction: h.$transaction,
     job: h.job,
     user: h.user,
     proposal: h.proposal,
@@ -70,6 +72,8 @@ afterAll(async () => {
 });
 
 beforeEach(() => {
+  h.$transaction.mockReset();
+  h.$transaction.mockImplementation((fn: (tx: typeof h) => Promise<unknown>) => fn(h));
   h.job.findUnique.mockReset();
   h.job.findMany.mockReset();
   h.job.update.mockReset();

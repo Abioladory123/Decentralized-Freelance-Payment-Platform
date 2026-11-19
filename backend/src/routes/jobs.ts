@@ -503,17 +503,12 @@ jobsRouter.put("/:id/assign", requireAuth, idempotency(), validate(assignJobSche
   try {
     const { freelancerAddress } = req.body as z.infer<typeof assignJobSchema>;
 
-    const execWithRetry = typeof withTransactionRetry === "function"
-      ? withTransactionRetry
-      : ((fn: () => Promise<unknown>) => fn());
-
-    const updated = (await execWithRetry(async () => {
-      const runTransaction = typeof prisma.$transaction === "function"
-        ? (fn: (tx: Prisma.TransactionClient) => Promise<unknown>, opts?: { isolationLevel?: Prisma.TransactionIsolationLevel }) =>
-            prisma.$transaction(fn, opts)
-        : (fn: (tx: typeof prisma) => Promise<unknown>) => fn(prisma);
-
-      return runTransaction(
+    // The job update, the winning proposal's ACCEPTED transition and the
+    // rejection of competing PENDING proposals must commit or roll back
+    // together, so a failure part-way never leaves a job assigned while its
+    // proposals are still PENDING.
+    const updated = (await withTransactionRetry(() =>
+      prisma.$transaction(
         async (tx) => {
           const job = await tx.job.findUnique({
             where: { id: req.params.id },
@@ -555,8 +550,8 @@ jobsRouter.put("/:id/assign", requireAuth, idempotency(), validate(assignJobSche
           return { assigned, job, freelancer };
         },
         { isolationLevel: Prisma.TransactionIsolationLevel.RepeatableRead },
-      );
-    })) as {
+      ),
+    )) as {
       assigned: Prisma.JobGetPayload<Record<string, never>>;
       job: Prisma.JobGetPayload<{ include: { client: true } }>;
       freelancer: Prisma.UserGetPayload<Record<string, never>>;
